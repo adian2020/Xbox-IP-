@@ -4,20 +4,20 @@ OpenWrt 的 LuCI 插件。按 Xbox 的 MAC 地址或局域网 IP 开始一次录
 
 ## 安装
 
-将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.2.1 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.2.1)
+将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.3.0 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.3.0)
 
 **使用 opkg 的 OpenWrt（例如 23.05、24.10）**
 
 ```sh
 opkg update
-opkg install /tmp/luci-app-xbox-capture_1.2.1-1_all.ipk
+opkg install /tmp/luci-app-xbox-capture_1.3.0-1_all.ipk
 ```
 
 **使用 apk 的 OpenWrt（例如 25.12）**
 
 ```sh
 apk update
-apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.2.1-r1.apk
+apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.3.0-r1.apk
 ```
 
 这里的 `--allow-untrusted` 用于安装这一个本地未签名的 APK。安装完成后重新打开 LuCI，进入 **服务 → Xbox 网络录制**。也可以用 `ubus call xbox-capture status '{}'` 确认插件已注册。
@@ -28,6 +28,19 @@ apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.2.1-r1.apk
 2. 完全退出要录制的游戏或软件。填写名称和最长录制时间，点 **开始录制**，再启动游戏。按需要经过登录、大厅、匹配、联机或语音场景。
 3. 点 **结束录制**。打开录制详情，筛选并取消勾选与游戏无关的条目。域名列会标记 `DNS` 或 `TLS SNI`，同一域名可以有两种来源。
 4. 下载 YAML。按当前 Clash / Mihomo 的配置方式选择以下格式。
+
+在 **录制记录** 可按时间或名称排序。勾选单条或点全选，再点 **删除所选** 并确认。
+
+### 端口与代理规则
+
+1.3.0 起，新录制的详情会显示公网 IP 实际观察到的 TCP 和 UDP 目标端口。域名端口来自识别到该名称的 TLS 握手。只有 DNS 记录的域名会显示 `—`，因为 DNS 查询端口属于解析服务。早期录制也会显示 `—`。
+
+Clash / Mihomo 的 `DOMAIN`、`IP-CIDR` 和 `IP-CIDR6` 按名称或地址匹配所有端口。导出的 YAML 和域名／IP MRS 可以直接用于这类匹配。若想只代理某个域名的 443 端口，可手动在 Mihomo 配置中组合 `DOMAIN` 与 `DST-PORT`。
+
+```yaml
+rules:
+  - "AND,((DOMAIN,game.example),(DST-PORT,443)),Xbox"
+```
 
 ### 只录新增
 

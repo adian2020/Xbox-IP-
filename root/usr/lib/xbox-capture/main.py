@@ -29,6 +29,7 @@ METHODS = {
     "get": {"id": "", "offset": 0},
     "export": {"id": "", "format": "", "policy": "", "omit": "", "offset": 0},
     "remove": {"id": ""},
+    "remove_many": {"ids": []},
     "mrs_build": {"id": "", "omit": ""},
     "mrs_status": {"job": ""},
     "mrs_download": {"job": "", "kind": "", "offset": 0},
@@ -38,6 +39,8 @@ METHODS = {
                        "directory": "", "game": "", "domain_name": "", "ip_name": ""},
 }
 MAX_ENTRIES = 2000
+MAX_TARGET_PORTS = 24
+MAX_SESSION_PORTS = 8192
 MAX_HISTORY = 20
 MAX_REQUEST = 16 * 1024
 MAX_RESPONSE = 48 * 1024
@@ -65,7 +68,11 @@ def label(value, prompt):
 
 
 def result_entries(result):
-    return result["domains"] + [{"value": value} for value in result["ips"]]
+    ip_ports = result.get("ip_ports", {})
+    return result["domains"] + [
+        {"value": value, "ports": ip_ports[value]} if value in ip_ports else {"value": value}
+        for value in result["ips"]
+    ]
 
 
 def selected_entries(result, omit):
@@ -142,11 +149,24 @@ class Session:
         self.process = None
         self.domains = {}
         self.addresses = set()
+        self.address_ports = {}
+        self.domain_ports = {}
+        self.port_total = 0
         self.started = time.monotonic()
         self.reason = None
         self.timer = None
 
-    def observe(self, dest, domains, origin):
+    def remember_port(self, targets, value, endpoint):
+        ports = targets.get(value, ())
+        if endpoint in ports:
+            return
+        if self.port_total >= MAX_SESSION_PORTS or len(ports) >= MAX_TARGET_PORTS:
+            self.summary["ports_truncated"] = True
+            return
+        targets.setdefault(value, set()).add(endpoint)
+        self.port_total += 1
+
+    def observe(self, dest, domains, origin, endpoint=None):
         self.summary["packet_count"] += 1
         if len(dest) == 4 and dest[0] == 198 and dest[1] in (18, 19):
             self.summary["fakeip_count"] += 1
@@ -156,6 +176,8 @@ class Session:
                 self.summary["ip_count"] = len(self.addresses)
             else:
                 self.summary["truncated"] = True
+        if endpoint and dest in self.addresses:
+            self.remember_port(self.address_ports, dest, endpoint)
         for domain in domains:
             if domain in self.baseline_domains:
                 continue
@@ -166,14 +188,24 @@ class Session:
                 self.summary["domain_count"] = len(self.domains)
             else:
                 self.summary["truncated"] = True
+                continue
+            if origin == "TLS SNI" and endpoint:
+                self.remember_port(self.domain_ports, domain, endpoint)
 
     def result(self):
+        domains = []
+        for value in sorted(self.domains):
+            entry = {"value": value, "sources": sorted(self.domains[value])}
+            if value in self.domain_ports:
+                entry["ports"] = sorted(self.domain_ports[value])
+            domains.append(entry)
         return {
             "summary": self.summary,
-            "domains": [{"value": value, "sources": sorted(self.domains[value])}
-                        for value in sorted(self.domains)],
+            "domains": domains,
             "ips": [str(ipaddress.ip_address(value))
                     for value in sorted(self.addresses, key=lambda value: (len(value), value))],
+            "ip_ports": {str(ipaddress.ip_address(value)): sorted(ports)
+                         for value, ports in self.address_ports.items()},
         }
 
 
@@ -366,6 +398,21 @@ class Controller:
         self.history.pop(id, None)
         return {"removed": id}
 
+    def remove_many(self, ids):
+        if not isinstance(ids, list) or not 1 <= len(ids) <= MAX_HISTORY:
+            raise ValueError("请选择有效的录制记录。")
+        for id in ids:
+            self.path(id)
+        removed, failed = [], []
+        for id in dict.fromkeys(ids):
+            try:
+                self.remove(id)
+            except OSError:
+                failed.append(id)
+            else:
+                removed.append(id)
+        return {"removed": removed, "failed": failed}
+
     def dispatch(self, method, args):
         if method == "status":
             return self.status()
@@ -391,6 +438,9 @@ class Controller:
         if method == "remove":
             with self.lock:
                 return self.remove(args.get("id"))
+        if method == "remove_many":
+            with self.lock:
+                return self.remove_many(args.get("ids"))
         if method == "mrs_build":
             with self.lock:
                 entries = selected_entries(self.get(args.get("id")), args.get("omit", ""))

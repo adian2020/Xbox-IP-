@@ -16,7 +16,7 @@ const get = rpc.declare({ object, method: 'get', params: ['id', 'offset'], raise
 const exportRules = rpc.declare({
 	object, method: 'export', params: ['id', 'format', 'policy', 'omit', 'offset'], raise: true
 });
-const remove = rpc.declare({ object, method: 'remove', params: ['id'], raise: true });
+const removeMany = rpc.declare({ object, method: 'remove_many', params: ['ids'], raise: true });
 
 const states = {
 	recording: '录制中',
@@ -36,16 +36,23 @@ function checked(response) {
 }
 
 function button(text, handler, style) {
-	return E('button', { type: 'button', class: 'btn cbi-button ' + (style || ''), click: handler }, [text]);
+	return E('button', { type: 'button', class: 'xbox-button ' + (style || ''), click: handler }, [text]);
 }
 
-function field(text, input, hint) {
-	return E('div', { class: 'cbi-value' }, [
-		E('label', { class: 'cbi-value-title', for: input.id }, [text]),
-		E('div', { class: 'cbi-value-field' }, [
-			input, typeof hint === 'string' ? E('div', { class: 'cbi-value-description' }, [hint]) : hint || ''
-		])
+function field(text, input, hint, wide) {
+	return E('div', { class: 'xbox-field' + (wide ? ' xbox-field-wide' : '') }, [
+		E('label', { for: input.id }, [text]),
+		input,
+		typeof hint === 'string' ? E('small', { class: 'xbox-muted' }, [hint]) : hint || ''
 	]);
+}
+
+function statusBadge(state, label) {
+	return E('span', { class: 'xbox-badge', 'data-state': state }, [label]);
+}
+
+function metric(value, title) {
+	return E('div', { class: 'xbox-metric' }, [value, E('span', {}, [title])]);
 }
 
 function errorNotice(error) {
@@ -88,11 +95,17 @@ return view.extend({
 
 	render() {
 		this.active = null;
-		this.available = false;
+		this.available = null;
 		this.busy = false;
 		this.request = 0;
 		this.captureRevision = 0;
 		this.baselines = new Map();
+		this.selectedHistory = new Set();
+		this.historyItems = [];
+		this.historyChecks = new Map();
+		this.historyRequest = 0;
+		this.hasHistory = false;
+		this.detailId = null;
 
 		const name = E('input', {
 			id: 'xbox-game', type: 'text', maxlength: 64, required: true, placeholder: '例如 Forza Horizon 5'
@@ -104,31 +117,51 @@ return view.extend({
 		this.baseline = E('select', { id: 'xbox-baseline', required: true, disabled: true }, [
 			E('option', { value: '' }, ['选择一条完整录制'])
 		]);
-		this.baselineDetails = E('div', { class: 'cbi-value-description', role: 'status' });
-		const baselineField = field('待机基线', this.baseline, this.baselineDetails);
+		this.baselineDetails = E('small', { class: 'xbox-muted', role: 'status' });
+		const baselineField = field('待机基线', this.baseline, this.baselineDetails, true);
 		const device = E('input', {
 			id: 'xbox-device', type: 'text', maxlength: 164, required: true,
 			placeholder: '例如 00:11:22:33:44:55'
 		});
 		const iface = E('input', { id: 'xbox-iface', type: 'text', value: 'br-lan', maxlength: 15, required: true });
-		const deviceField = field('Xbox 地址', device, '可用 MAC 或局域网 IP。路由器能确认 MAC 时会同时匹配 IPv4 和 IPv6。');
-		const ifaceField = field('LAN 接口', iface, '例如 br-lan 或 br-lan.20。接口不确定时可填写 any。');
+		const deviceField = field('Xbox 地址', device, '填写 MAC 或局域网 IP。', true);
+		const ifaceField = field('LAN 接口', iface, '可填 br-lan、VLAN 接口或 any。');
 		const minutes = E('input', { id: 'xbox-minutes', type: 'number', value: 120, min: 1, max: 360, required: true });
 		this.startButton = E('button', {
-			type: 'submit', class: 'btn cbi-button cbi-button-action', disabled: true
+			type: 'submit', class: 'xbox-button xbox-primary', disabled: true
 		}, ['开始录制']);
-		this.stopButton = button('结束录制', () => this.changeCapture(() => stop()), 'cbi-button-remove');
+		this.stopButton = button('结束录制', () => this.changeCapture(() => stop()), 'xbox-danger');
 		this.stopButton.disabled = true;
-		this.statusText = E('p', { role: 'status' }, ['正在连接录制服务…']);
-		this.captureText = E('p', { class: 'cbi-value-description' });
-		this.history = E('div', {}, ['正在读取录制记录…']);
-		this.detail = E('div', { class: 'cbi-section', hidden: true });
+		this.statusText = E('span', { role: 'status', class: 'xbox-badge' });
+		this.liveName = E('strong', { class: 'xbox-live-name' });
+		this.liveTime = E('span', { class: 'xbox-live-time' });
+		this.liveSession = E('div', { class: 'xbox-live-session', hidden: true }, [this.liveName, this.liveTime]);
+		this.packetValue = E('strong');
+		this.domainValue = E('strong');
+		this.ipValue = E('strong');
+		this.captureText = E('p', { class: 'xbox-muted xbox-capture-note' });
+		this.history = E('div', { class: 'xbox-muted' }, ['正在读取录制记录…']);
+		this.detail = E('section', { class: 'xbox-panel xbox-detail', hidden: true, 'aria-label': '录制详情' });
+		this.historyMaster = E('input', { type: 'checkbox', 'aria-label': '全选录制记录' });
+		this.historySelection = E('span', { class: 'xbox-muted', role: 'status' });
+		this.historySort = E('select', { 'aria-label': '录制排序' }, [
+			E('option', { value: 'recent' }, ['最新优先']),
+			E('option', { value: 'earliest' }, ['最早优先']),
+			E('option', { value: 'name' }, ['名称排序'])
+		]);
+		this.historyDelete = button('删除所选', () => this.confirmRemove([...this.selectedHistory]), 'xbox-danger');
+		this.historyMaster.addEventListener('change', () => {
+			this.selectedHistory = new Set(this.historyMaster.checked ? this.historyChecks.keys() : []);
+			this.updateHistorySelection();
+		});
+		this.historySort.addEventListener('change', () => this.drawHistory());
+		this.updateHistorySelection();
 
 		const updateMode = () => {
 			const onlyNew = this.captureMode.value === 'new';
-			baselineField.style.display = onlyNew ? '' : 'none';
+			baselineField.hidden = !onlyNew;
 			this.baseline.disabled = !onlyNew;
-			deviceField.style.display = ifaceField.style.display = onlyNew ? 'none' : '';
+			deviceField.hidden = ifaceField.hidden = onlyNew;
 			device.disabled = iface.disabled = onlyNew;
 			this.updateBaselineDetails();
 		};
@@ -137,6 +170,7 @@ return view.extend({
 		updateMode();
 
 		const form = E('form', {
+			class: 'xbox-form',
 			submit: event => {
 				event.preventDefault();
 				if (this.startButton.disabled)
@@ -147,27 +181,49 @@ return view.extend({
 				return this.changeCapture(() => start(name.value, iface.value.trim(), device.value, Number(minutes.value), ''));
 			}
 		}, [
-			field('游戏或软件名称', name),
-			field('录制模式', this.captureMode),
+			field('游戏或软件名称', name, null, true),
 			deviceField,
 			ifaceField,
-			baselineField,
+			field('录制模式', this.captureMode),
 			field('最长录制时间（分钟）', minutes),
-			E('p', {}, [this.startButton, ' ', this.stopButton]),
-			this.statusText,
-			this.captureText
+			baselineField,
+			E('div', { class: 'xbox-actions xbox-field-wide' }, [this.startButton, this.stopButton])
 		]);
-		const root = E('div', {}, [
-			E('h2', {}, ['Xbox 网络录制']),
-			E('p', {}, ['先启动录制，再打开游戏。完成后结束录制，勾选需要导出的域名和 IP。']),
-			E('div', { class: 'cbi-section' }, [form]),
-			mrs.render(),
-			E('div', { class: 'cbi-section' }, [
-				E('h3', {}, ['录制记录']),
-				E('p', {}, ['记录保存在路由器的临时存储中。重启路由器前请下载需要的规则。']),
+		const root = E('div', { id: 'xbox-capture' }, [
+			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.3.0' }),
+			E('header', { class: 'xbox-heading' }, [
+				E('h2', {}, ['Xbox 网络录制']),
+				E('p', { class: 'xbox-muted' }, ['先开始录制，再打开游戏。'])
+			]),
+			E('div', { class: 'xbox-overview' }, [
+				E('section', { class: 'xbox-panel xbox-config' }, [E('h3', {}, ['录制设置']), form]),
+				E('section', { class: 'xbox-panel xbox-live' }, [
+					E('div', { class: 'xbox-panel-head' }, [E('h3', {}, ['实时状态']), this.statusText]),
+					this.liveSession,
+					E('div', { class: 'xbox-metrics' }, [
+						metric(this.packetValue, '目标 IP 报文'),
+						metric(this.domainValue, '域名'),
+						metric(this.ipValue, '公网 IP')
+					]),
+					this.captureText
+				])
+			]),
+			E('section', { class: 'xbox-panel xbox-history' }, [
+				E('div', { class: 'xbox-panel-head' }, [
+					E('h3', {}, ['录制记录']),
+					E('small', { class: 'xbox-muted' }, ['重启路由器前请下载所需规则'])
+				]),
+				E('div', { class: 'xbox-toolbar' }, [
+					E('label', { class: 'xbox-check' }, [this.historyMaster, '全选']),
+					this.historySelection,
+					E('div', { class: 'xbox-toolbar-end' }, [this.historySort, this.historyDelete])
+				]),
 				this.history
 			]),
-			this.detail
+			this.detail,
+			E('details', { class: 'xbox-panel xbox-integrations' }, [
+				E('summary', {}, ['GitHub 与 MRS']), mrs.render()
+			])
 		]);
 
 		poll.add(() => this.refresh(), 2);
@@ -178,16 +234,21 @@ return view.extend({
 	updateStatus(active, available) {
 		this.active = active;
 		this.available = available;
-		const text = !available ? '录制服务未响应。'
-			: !active ? '当前无录制。'
-			: states[active.state] + ' · ' + active.name + ' · ' +
-				duration(active.elapsed) + ' · ' + counts(active);
+		const text = available === null ? '连接中' : !available ? '服务未响应'
+			: !active ? '待录制' : states[active.state];
 		if (this.statusText.textContent !== text)
 			this.statusText.textContent = text;
+		this.statusText.setAttribute('data-state', available === false ? 'error' : active?.state || 'idle');
+		this.liveSession.hidden = !active;
+		this.liveName.textContent = active?.name ?? '';
+		this.liveTime.textContent = active ? duration(active.elapsed) : '—';
+		this.packetValue.textContent = active?.packet_count ?? '—';
+		this.domainValue.textContent = active?.domain_count ?? '—';
+		this.ipValue.textContent = active?.ip_count ?? '—';
 		let hint = '';
 		if (available && active && Number.isInteger(active.packet_count)) {
 			const selector = active.capture_mac ? 'MAC ' + active.capture_mac : '当前填写的 IP';
-			hint = '接口 ' + active.interface + ' · ' + selector + ' · 收到 ' + active.packet_count + ' 个目标 IP 报文';
+			hint = '接口 ' + active.interface + ' · ' + selector;
 			if (active.state === 'recording' && (active.elapsed >= 8 || active.packet_count)) {
 				const explanation = captureHint(active);
 				if (explanation)
@@ -195,6 +256,7 @@ return view.extend({
 			}
 		}
 		this.captureText.textContent = hint;
+		this.captureText.hidden = !hint;
 		this.startButton.disabled = this.busy || !available || !!active ||
 			(this.captureMode.value === 'new' && !this.baselines.has(this.baseline.value));
 		this.stopButton.disabled = this.busy || !available || !active || active.state === 'stopping';
@@ -258,7 +320,10 @@ return view.extend({
 	},
 
 	async refreshHistory(finished) {
+		const request = ++this.historyRequest;
 		const response = checked(await sessions());
+		if (request !== this.historyRequest)
+			return;
 		const selected = this.baseline.value;
 		const eligible = response.sessions.filter(session => !session.baseline && baselineStates.has(session.state));
 		this.baselines = new Map(eligible.map(session => [session.id, session]));
@@ -268,27 +333,77 @@ return view.extend({
 		);
 		this.baseline.value = this.baselines.has(selected) ? selected : '';
 		this.updateBaselineDetails();
-		if (!response.sessions.length) {
-			this.history.textContent = '暂无录制记录。';
-		} else {
-			const rows = response.sessions.map(session => E('div', { class: 'tr' }, [
-				E('div', { class: 'td' }, [session.name, E('br'), dateTime(session.started)]),
-				E('div', { class: 'td' }, [states[session.state] + ' · ' + counts(session)]),
-				E('div', { class: 'td cbi-section-actions' }, [
-					button('查看与导出', () => this.openSession(session.id))
-				])
-			]));
-			this.history.replaceChildren(E('div', { class: 'table' }, rows));
-		}
+		this.historyItems = response.sessions;
+		const known = new Set(response.sessions.map(session => session.id));
+		this.selectedHistory = new Set([...this.selectedHistory].filter(id => known.has(id)));
+		this.drawHistory();
 		this.hasHistory = true;
-		if (finished && response.sessions.some(session => session.id === finished))
+		if (finished && known.has(finished))
 			await this.openSession(finished);
 	},
 
-	async openSession(id) {
+	drawHistory() {
+		const items = [...this.historyItems];
+		const sort = this.historySort.value;
+		items.sort((a, b) => {
+			if (sort === 'name')
+				return a.name.localeCompare(b.name, 'zh-CN') || b.started - a.started;
+			return sort === 'earliest' ? a.started - b.started : b.started - a.started;
+		});
+		this.historyChecks.clear();
+		const rows = items.map(session => {
+			const name = E('strong', { class: 'xbox-record-name' }, [session.name]);
+			const input = E('input', { type: 'checkbox', 'aria-label': '选择 ' + session.name });
+			const row = E('li', { class: 'xbox-record' }, [
+				E('label', { class: 'xbox-record-label' }, [
+					input,
+					E('span', {}, [name, E('small', { class: 'xbox-muted' }, [dateTime(session.started)])])
+				]),
+				E('div', { class: 'xbox-record-info' }, [
+					statusBadge(session.state, states[session.state]),
+					E('small', { class: 'xbox-muted' }, [counts(session)])
+				]),
+				button('查看与导出', () => this.openSession(session.id, true), 'xbox-compact')
+			]);
+			input.addEventListener('change', () => {
+				if (input.checked)
+					this.selectedHistory.add(session.id);
+				else
+					this.selectedHistory.delete(session.id);
+				this.updateHistorySelection();
+			});
+			this.historyChecks.set(session.id, { input, row });
+			return row;
+		});
+		if (rows.length)
+			this.history.replaceChildren(E('ul', { class: 'xbox-history-list' }, rows));
+		else
+			this.history.replaceChildren(E('p', { class: 'xbox-empty' }, ['暂无录制记录']));
+		this.historySort.disabled = rows.length < 2;
+		this.updateHistorySelection();
+	},
+
+	updateHistorySelection() {
+		const count = this.selectedHistory.size;
+		const total = this.historyChecks.size;
+		this.historyMaster.disabled = !total;
+		this.historyMaster.checked = total > 0 && count === total;
+		this.historyMaster.indeterminate = count > 0 && count < total;
+		this.historyDelete.disabled = !count;
+		this.historySelection.textContent = '已选 ' + count + ' 条';
+		for (const [id, { input, row }] of this.historyChecks) {
+			input.checked = this.selectedHistory.has(id);
+			row.classList.toggle('is-selected', input.checked);
+		}
+	},
+
+	async openSession(id, scroll = false) {
 		const request = ++this.request;
+		this.detailId = id;
 		this.detail.hidden = false;
 		this.detail.textContent = '正在读取录制…';
+		if (scroll)
+			this.detail.scrollIntoView({ block: 'start' });
 		try {
 			let offset = 0;
 			const entries = [];
@@ -311,10 +426,10 @@ return view.extend({
 		const excluded = new Set();
 		let page = 0;
 		let exporting = false;
-		const table = E('div', { class: 'table' });
-		const paging = E('span');
-		const selected = E('span', { role: 'status' });
-		const search = E('input', { type: 'search', id: 'xbox-search', placeholder: '输入域名或 IP' });
+		const table = E('div', { class: 'xbox-results', role: 'table', 'aria-label': '域名、IP 与端口' });
+		const paging = E('span', { class: 'xbox-muted' });
+		const selected = E('span', { class: 'xbox-muted', role: 'status' });
+		const search = E('input', { type: 'search', id: 'xbox-search', placeholder: '搜索域名、IP 或端口' });
 		const searchType = E('select', { 'aria-label': '条目类型' }, [
 			E('option', { value: 'all' }, ['全部']),
 			E('option', { value: 'domain' }, ['域名']),
@@ -334,7 +449,9 @@ return view.extend({
 		const indexed = entries.map((entry, index) => ({ entry, index }));
 		const matches = () => {
 			const query = search.value.trim().toLowerCase();
-			return indexed.filter(({ entry }) => entry.value.includes(query) &&
+			return indexed.filter(({ entry }) =>
+				(entry.value.includes(query) || entry.ports?.some(([protocol, port]) =>
+					(protocol.toLowerCase() + ' ' + port).includes(query))) &&
 				(searchType.value === 'all' || searchType.value === (entry.sources ? 'domain' : 'ip')));
 		};
 		const updateSelected = () => {
@@ -358,12 +475,25 @@ return view.extend({
 						excluded.add(index);
 					updateSelected();
 				});
-				return E('div', { class: 'tr' }, [
-					E('label', { class: 'td', style: 'overflow-wrap:anywhere' }, [choice, ' ', entry.value]),
-					E('div', { class: 'td' }, [entry.sources ? entry.sources.join(' / ') : entry.value.includes(':') ? 'IPv6' : 'IPv4'])
+				const source = entry.sources ? entry.sources.join(' / ') : entry.value.includes(':') ? 'IPv6' : 'IPv4';
+				const ports = (entry.ports || []).map(([protocol, port]) =>
+					E('span', { class: 'xbox-port', 'data-protocol': protocol }, [protocol + ' ' + port]));
+				return E('div', { class: 'xbox-result-row', role: 'row' }, [
+					E('div', { role: 'cell' }, [
+						E('label', { class: 'xbox-result-label' }, [choice,
+							E('span', {}, [E('span', { class: 'xbox-target' }, [entry.value]),
+								E('small', { class: 'xbox-muted' }, [source])])
+						])
+					]),
+					E('div', { class: 'xbox-ports', role: 'cell' }, ports.length ? ports : [
+						E('span', { class: 'xbox-muted', 'aria-label': '无已记录端口' }, ['—'])
+					])
 				]);
 			});
-			table.replaceChildren(...(rows.length ? rows : [E('p', {}, ['没有匹配的条目。'])]));
+			table.replaceChildren(E('div', { class: 'xbox-result-row xbox-result-head', role: 'row' }, [
+				E('span', { role: 'columnheader' }, ['目标及来源']),
+				E('span', { role: 'columnheader' }, ['目标端口'])
+			]), ...(rows.length ? rows : [E('p', { class: 'xbox-empty' }, ['没有匹配的条目'])]));
 			updateSelected();
 		};
 		const resetPage = () => { page = 0; drawRows(); };
@@ -381,10 +511,10 @@ return view.extend({
 				exporting = false;
 				updateSelected();
 			}
-		}, 'cbi-button-action');
+		}, 'xbox-primary');
 		const selection = () => excluded.size ? entries.map((_, i) => excluded.has(i) ? '1' : '0').join('') : '';
 		const mrsButton = button('导出或发布 MRS', () => mrs.fromRecording(session.name, session.id, selection()));
-		const deleteButton = button('删除录制', () => this.confirmRemove(session), 'cbi-button-remove');
+		const deleteButton = button('删除这条录制', () => this.confirmRemove([session.id]), 'xbox-danger');
 
 		const notes = [];
 		if (session.error)
@@ -393,33 +523,45 @@ return view.extend({
 			notes.push(session.storage_warning);
 		if (session.truncated)
 			notes.push('已达到去重条目上限，部分地址或域名未保存。');
+		if (session.ports_truncated)
+			notes.push('已达到端口记录上限，部分端口未显示。');
 		if (session.kernel_drops)
 			notes.push('内核丢失了 ' + session.kernel_drops + ' 个抓包数据包。');
 		if (Number.isInteger(session.packet_count)) {
-			const selector = session.capture_mac ? ' · MAC ' + session.capture_mac : '';
-			notes.push('收到 ' + session.packet_count + ' 个目标 IP 报文' + selector + '。');
 			if (!session.error && captureHint(session))
 				notes.push(captureHint(session));
 		}
 
+		const device = session.capture_mac && session.capture_mac !== session.device
+			? session.device + ' · MAC ' + session.capture_mac : session.device;
+		const traffic = Number.isInteger(session.packet_count) ? session.packet_count + ' 个报文 · ' : '';
 		this.detail.replaceChildren(
-			E('h3', {}, [session.name]),
-			E('p', {}, [session.interface + ' · ' + session.device]),
-			...(session.baseline ? [E('p', {}, ['参照基线「' + session.baseline.name + '」'])] : []),
-			E('p', {}, [dateTime(session.started) + ' · ' + duration(session.ended - session.started) +
-				' · ' + states[session.state] + ' · ' + counts(session)]),
-			...notes.map(note => E('p', { class: 'alert-message warning' }, [note])),
-			field('筛选记录', search),
-			E('p', {}, [
-				searchType, ' ',
-				button('选中匹配项', () => { matches().forEach(({ index }) => excluded.delete(index)); drawRows(); }), ' ',
-				button('取消匹配项', () => { matches().forEach(({ index }) => excluded.add(index)); drawRows(); })
+			E('div', { class: 'xbox-panel-head' }, [
+				E('h3', {}, [session.name]),
+				statusBadge(session.state, states[session.state])
+			]),
+			E('p', { class: 'xbox-muted' }, [dateTime(session.started) + ' · ' + duration(session.ended - session.started) +
+				' · ' + traffic + counts(session)]),
+			E('p', { class: 'xbox-muted' }, [session.interface + ' · ' + device]),
+			...(session.baseline ? [E('p', { class: 'xbox-muted' }, ['参照基线「' + session.baseline.name + '」'])] : []),
+			...notes.map(note => E('p', { class: 'xbox-note' }, [note])),
+			E('div', { class: 'xbox-detail-search' }, [
+				field('筛选结果', search),
+				E('div', { class: 'xbox-actions' }, [
+					searchType,
+					button('选中匹配项', () => { matches().forEach(({ index }) => excluded.delete(index)); drawRows(); }),
+					button('取消匹配项', () => { matches().forEach(({ index }) => excluded.add(index)); drawRows(); })
+				])
 			]),
 			table,
-			E('p', {}, [previous, ' ', paging, ' ', next, ' · ', selected]),
-			field('导出格式', format),
-			policyField,
-			E('p', {}, [download, ' ', mrsButton, ' ', deleteButton])
+			E('div', { class: 'xbox-paging' }, [previous, paging, next, selected]),
+			E('p', { class: 'xbox-muted xbox-port-note' }, [
+				'域名端口来自 TLS 握手。普通域名和 IP 规则匹配所有端口。'
+			]),
+			E('div', { class: 'xbox-export' }, [
+				E('div', { class: 'xbox-export-fields' }, [field('导出格式', format), policyField]),
+				E('div', { class: 'xbox-actions' }, [download, mrsButton, deleteButton])
+			])
 		);
 		drawRows();
 	},
@@ -442,23 +584,41 @@ return view.extend({
 		window.setTimeout(() => URL.revokeObjectURL(href), 3000);
 	},
 
-	confirmRemove(session) {
+	confirmRemove(ids) {
+		if (!ids.length)
+			return;
+		const record = this.historyItems.find(session => session.id === ids[0]);
+		const message = ids.length === 1 && record ? '删除「' + record.name + '」的录制记录？'
+			: '删除选中的 ' + ids.length + ' 条录制记录？';
+		const cancel = button('取消', () => ui.hideModal(), 'btn cbi-button');
 		const confirm = button('删除', async () => {
+			cancel.disabled = true;
 			confirm.disabled = true;
 			try {
-				checked(await remove(session.id));
+				const result = checked(await removeMany(ids));
 				ui.hideModal();
-				++this.request;
-				this.detail.hidden = true;
+				const removed = new Set(result.removed || []);
+				for (const id of removed)
+					this.selectedHistory.delete(id);
+				if (removed.has(this.detailId)) {
+					++this.request;
+					this.detailId = null;
+					this.detail.hidden = true;
+				}
+				this.historyItems = this.historyItems.filter(session => !removed.has(session.id));
+				this.drawHistory();
+				if (result.failed?.length)
+					errorNotice(new Error('有 ' + result.failed.length + ' 条录制未能删除，可在列表中重试。'));
 				await this.refreshHistory();
 			} catch (error) {
 				errorNotice(error);
+				cancel.disabled = false;
 				confirm.disabled = false;
 			}
-		}, 'cbi-button-remove');
+		}, 'btn cbi-button cbi-button-remove');
 		ui.showModal('删除录制', [
-			E('p', {}, ['删除“' + session.name + '”的录制记录？']),
-			E('div', { class: 'right' }, [button('取消', () => ui.hideModal()), ' ', confirm])
+			E('p', {}, [message]),
+			E('div', { class: 'right' }, [cancel, ' ', confirm])
 		]);
 	}
 });

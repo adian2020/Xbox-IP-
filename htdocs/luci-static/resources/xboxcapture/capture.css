@@ -1,0 +1,495 @@
+#xbox-capture {
+	--xbox-ink: #172c28;
+	--xbox-muted: #536861;
+	--xbox-line: #d9e7e0;
+	--xbox-surface: #fff;
+	--xbox-wash: #f1f7f4;
+	--xbox-accent: #14664f;
+	--xbox-accent-soft: #ddf1e8;
+	--xbox-danger: #a12d39;
+	--xbox-danger-soft: #fbe9eb;
+	--xbox-warn: #795117;
+	--xbox-warn-soft: #fff2d9;
+	max-width: 1120px;
+	margin: 0 auto 1.25rem;
+	display: grid;
+	gap: 14px;
+	color: var(--xbox-ink);
+	line-height: 1.45;
+}
+
+#xbox-capture [hidden] {
+	display: none !important;
+}
+
+#xbox-capture h2,
+#xbox-capture h3,
+#xbox-capture p {
+	margin: 0;
+}
+
+#xbox-capture h2,
+#xbox-capture h3 {
+	color: var(--xbox-ink);
+	font-weight: 700;
+	line-height: 1.3;
+	background: none;
+	border: 0;
+	padding: 0;
+}
+
+#xbox-capture h2 { font-size: clamp(1.45rem, 3vw, 2rem); }
+#xbox-capture h3 { font-size: 1.12rem; overflow-wrap: anywhere; }
+
+#xbox-capture .xbox-heading {
+	padding: 15px 19px;
+	border: 1px solid var(--xbox-line);
+	border-left: 4px solid var(--xbox-accent);
+	border-radius: 12px;
+	background: var(--xbox-wash);
+}
+
+#xbox-capture .xbox-heading p {
+	margin-top: 6px;
+}
+
+#xbox-capture .xbox-overview {
+	display: grid;
+	grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr);
+	align-items: start;
+	gap: 14px;
+}
+
+#xbox-capture .xbox-panel {
+	min-width: 0;
+	padding: 17px;
+	border: 1px solid var(--xbox-line);
+	border-radius: 12px;
+	background: var(--xbox-surface);
+}
+
+#xbox-capture .xbox-panel-head {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 7px 12px;
+}
+
+#xbox-capture .xbox-muted {
+	color: var(--xbox-muted);
+}
+
+#xbox-capture small {
+	font-size: .83rem;
+}
+
+#xbox-capture .xbox-form {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 12px;
+	margin-top: 14px;
+}
+
+#xbox-capture .xbox-field {
+	min-width: 0;
+	display: grid;
+	gap: 5px;
+	align-content: start;
+}
+
+#xbox-capture .xbox-field-wide {
+	grid-column: 1 / -1;
+}
+
+#xbox-capture .xbox-field label {
+	margin: 0;
+	font-weight: 650;
+	color: var(--xbox-ink);
+}
+
+#xbox-capture .xbox-field input,
+#xbox-capture select {
+	min-width: 0;
+	max-width: 100%;
+	min-height: 39px;
+	margin: 0;
+}
+
+#xbox-capture .xbox-field input,
+#xbox-capture .xbox-field select {
+	width: 100%;
+	box-sizing: border-box;
+}
+
+#xbox-capture .xbox-field input,
+#xbox-capture select {
+	padding: 6px 9px;
+	border: 1px solid var(--xbox-line);
+	border-radius: 7px;
+	color: var(--xbox-ink);
+	background-color: var(--xbox-surface);
+	box-shadow: none;
+	font-size: inherit;
+}
+
+#xbox-capture .xbox-field input::placeholder {
+	color: var(--xbox-muted);
+	opacity: .85;
+}
+
+#xbox-capture select {
+	padding-right: 1.55em;
+}
+
+#xbox-capture .xbox-field input:focus-visible,
+#xbox-capture select:focus-visible,
+#xbox-capture button:focus-visible,
+#xbox-capture input[type='checkbox']:focus-visible,
+#xbox-capture summary:focus-visible {
+	outline: 2px solid var(--xbox-accent);
+	outline-offset: 2px;
+}
+
+#xbox-capture .xbox-actions,
+#xbox-capture .xbox-toolbar,
+#xbox-capture .xbox-toolbar-end,
+#xbox-capture .xbox-paging {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 7px;
+}
+
+#xbox-capture .xbox-button {
+	min-height: 39px;
+	padding: 6px 12px;
+	border: 1px solid var(--xbox-line);
+	border-radius: 7px;
+	color: var(--xbox-ink);
+	background: var(--xbox-surface);
+	box-shadow: none;
+	font: inherit;
+	font-weight: 600;
+	line-height: 1.25;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+#xbox-capture .xbox-button:hover:not(:disabled) {
+	border-color: var(--xbox-accent);
+}
+
+#xbox-capture .xbox-primary {
+	background: var(--xbox-accent);
+	border-color: var(--xbox-accent);
+	color: #fff;
+}
+
+#xbox-capture .xbox-danger {
+	color: var(--xbox-danger);
+}
+
+#xbox-capture .xbox-danger:hover:not(:disabled) {
+	background: var(--xbox-danger-soft);
+	border-color: var(--xbox-danger);
+}
+
+#xbox-capture .xbox-button:disabled {
+	opacity: .52;
+	cursor: default;
+}
+
+#xbox-capture .xbox-live {
+	background: var(--xbox-wash);
+}
+
+#xbox-capture .xbox-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: fit-content;
+	border-radius: 5px;
+	padding: 3px 7px;
+	background: var(--xbox-wash);
+	color: var(--xbox-muted);
+	font-size: .81rem;
+	font-weight: 650;
+	white-space: nowrap;
+}
+
+#xbox-capture .xbox-badge[data-state='recording'],
+#xbox-capture .xbox-badge[data-state='stopped'] {
+	background: var(--xbox-accent-soft);
+	color: var(--xbox-accent);
+}
+
+#xbox-capture .xbox-live .xbox-badge[data-state='idle'] {
+	background: var(--xbox-surface);
+}
+
+#xbox-capture .xbox-badge[data-state='timeout'],
+#xbox-capture .xbox-badge[data-state='stopping'] {
+	background: var(--xbox-warn-soft);
+	color: var(--xbox-warn);
+}
+
+#xbox-capture .xbox-badge[data-state='error'] {
+	background: var(--xbox-danger-soft);
+	color: var(--xbox-danger);
+}
+
+#xbox-capture .xbox-live-session {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-top: 14px;
+}
+
+#xbox-capture .xbox-live-name { overflow-wrap: anywhere; }
+#xbox-capture .xbox-live-time { white-space: nowrap; color: var(--xbox-muted); }
+
+#xbox-capture .xbox-metrics {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 7px;
+	margin-top: 10px;
+}
+
+#xbox-capture .xbox-metric {
+	min-width: 0;
+	display: grid;
+	gap: 2px;
+	padding: 8px 9px;
+	background: var(--xbox-surface);
+	border: 1px solid var(--xbox-line);
+	border-radius: 7px;
+}
+
+#xbox-capture .xbox-metric strong {
+	color: var(--xbox-ink);
+	font-variant-numeric: tabular-nums;
+	font-size: clamp(1rem, 2.5vw, 1.35rem);
+	overflow-wrap: anywhere;
+}
+
+#xbox-capture .xbox-metric span { color: var(--xbox-muted); font-size: .79rem; }
+#xbox-capture .xbox-capture-note { margin-top: 10px; overflow-wrap: anywhere; }
+
+#xbox-capture .xbox-toolbar {
+	margin: 12px 0 9px;
+	padding: 7px 9px;
+	background: var(--xbox-wash);
+	border-radius: 8px;
+	gap: 7px 13px;
+}
+
+#xbox-capture .xbox-toolbar-end { margin-left: auto; }
+
+#xbox-capture input[type='checkbox'] {
+	width: 18px;
+	height: 18px;
+	margin: 0;
+	flex: none;
+	accent-color: var(--xbox-accent);
+}
+
+#xbox-capture .xbox-check,
+#xbox-capture .xbox-record-label,
+#xbox-capture .xbox-result-label {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	color: var(--xbox-ink);
+	cursor: pointer;
+}
+
+#xbox-capture .xbox-check { min-height: 36px; }
+
+#xbox-capture .xbox-history-list {
+	display: grid;
+	gap: 6px;
+	padding: 0;
+	margin: 0;
+	list-style: none;
+}
+
+#xbox-capture .xbox-record {
+	min-width: 0;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(150px, .55fr) max-content;
+	align-items: center;
+	gap: 7px 12px;
+	padding: 9px;
+	border: 1px solid var(--xbox-line);
+	border-radius: 8px;
+	background: var(--xbox-surface);
+	margin: 0;
+}
+
+#xbox-capture .xbox-record.is-selected {
+	border-color: var(--xbox-accent);
+	background: var(--xbox-wash);
+}
+
+#xbox-capture .xbox-record-label > span,
+#xbox-capture .xbox-result-label > span {
+	min-width: 0;
+	display: grid;
+	gap: 2px;
+}
+
+#xbox-capture .xbox-record-name,
+#xbox-capture .xbox-target {
+	overflow-wrap: anywhere;
+}
+
+#xbox-capture .xbox-record-info {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 4px 7px;
+}
+
+#xbox-capture .xbox-compact { padding-inline: 9px; }
+
+#xbox-capture .xbox-empty {
+	padding: 13px;
+	text-align: center;
+	color: var(--xbox-muted);
+}
+
+#xbox-capture .xbox-detail {
+	scroll-margin-top: 60px;
+}
+
+#xbox-capture .xbox-detail > p {
+	margin-top: 5px;
+	overflow-wrap: anywhere;
+}
+
+#xbox-capture .xbox-note {
+	background: var(--xbox-warn-soft);
+	color: var(--xbox-warn);
+	border-radius: 7px;
+	padding: 7px 9px;
+}
+
+#xbox-capture .xbox-detail-search {
+	display: flex;
+	align-items: end;
+	flex-wrap: wrap;
+	gap: 7px;
+	margin-top: 13px;
+}
+
+#xbox-capture .xbox-detail-search .xbox-field {
+	flex: 1 1 200px;
+}
+
+#xbox-capture .xbox-results {
+	margin-top: 10px;
+	border: 1px solid var(--xbox-line);
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+#xbox-capture .xbox-result-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+	align-items: center;
+	gap: 8px;
+	padding: 8px 10px;
+	border-bottom: 1px solid var(--xbox-line);
+}
+
+#xbox-capture .xbox-result-row:last-child { border-bottom: 0; }
+#xbox-capture .xbox-result-head { background: var(--xbox-wash); font-weight: 650; }
+#xbox-capture .xbox-target { font-weight: 600; }
+
+#xbox-capture .xbox-ports {
+	min-width: 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
+#xbox-capture .xbox-port {
+	display: inline-block;
+	padding: 2px 5px;
+	border-radius: 5px;
+	font-variant-numeric: tabular-nums;
+	font-size: .8rem;
+	background: var(--xbox-accent-soft);
+	color: var(--xbox-accent);
+	white-space: nowrap;
+}
+
+#xbox-capture .xbox-port[data-protocol='UDP'] {
+	background: var(--xbox-warn-soft);
+	color: var(--xbox-warn);
+}
+
+#xbox-capture .xbox-paging { margin-top: 8px; }
+#xbox-capture .xbox-paging [role='status'] { margin-left: auto; }
+#xbox-capture .xbox-port-note { font-size: .84rem; }
+
+#xbox-capture .xbox-export {
+	display: grid;
+	gap: 9px;
+	border-top: 1px solid var(--xbox-line);
+	margin-top: 13px;
+	padding-top: 13px;
+}
+
+#xbox-capture .xbox-export-fields {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 230px));
+	gap: 8px;
+}
+
+#xbox-capture .xbox-integrations > summary {
+	cursor: pointer;
+	font-weight: 700;
+}
+
+#xbox-capture .xbox-integrations .cbi-section {
+	margin: 12px 0 0;
+}
+
+@media (max-width: 720px) {
+	#xbox-capture .xbox-overview { grid-template-columns: minmax(0, 1fr); }
+	#xbox-capture .xbox-live { grid-row: 1; }
+}
+
+@media (max-width: 540px) {
+	#xbox-capture { gap: 10px; }
+	#xbox-capture .xbox-panel { padding: 12px; }
+	#xbox-capture .xbox-heading { padding: 12px; }
+	#xbox-capture .xbox-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	#xbox-capture .xbox-toolbar-end { flex: 1 1 100%; margin-left: 0; }
+	#xbox-capture .xbox-toolbar-end select { flex: 1; }
+	#xbox-capture .xbox-record { grid-template-columns: minmax(0, 1fr) max-content; }
+	#xbox-capture .xbox-record-info { grid-column: 1 / -1; grid-row: 2; padding-left: 27px; }
+	#xbox-capture .xbox-result-row { padding: 7px; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); }
+}
+
+@media (prefers-color-scheme: dark) {
+	#xbox-capture {
+		--xbox-ink: #eaf4ef;
+		--xbox-muted: #afc4ba;
+		--xbox-line: #365047;
+		--xbox-surface: #1c2a25;
+		--xbox-wash: #253b32;
+		--xbox-accent: #9fe2c7;
+		--xbox-accent-soft: #254a3c;
+		--xbox-danger: #ffadb6;
+		--xbox-danger-soft: #552f37;
+		--xbox-warn: #ffdb95;
+		--xbox-warn-soft: #493b21;
+		color-scheme: dark;
+	}
+
+	#xbox-capture .xbox-primary { color: #183f31; }
+}

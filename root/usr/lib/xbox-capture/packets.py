@@ -363,12 +363,16 @@ class PacketDecoder:
     def inspect(self, link, frame):
         packet = network_packet(link, frame, self.device)
         if packet is None:
-            return None, set(), None
+            return None, set(), None, None
         source, dest, protocol, data = packet
-        if protocol == 17 and len(data) >= 8 and number(data, 2) == 53:
+        if protocol == 17 and len(data) >= 8:
+            port = number(data, 2)
             udp_length = number(data, 4)
-            if 8 <= udp_length <= len(data):
-                return dest, dns_questions(data[8:udp_length]), "DNS"
+            if port and udp_length >= 8:
+                endpoint = ("UDP", port)
+                if port == 53 and udp_length <= len(data):
+                    return dest, dns_questions(data[8:udp_length]), "DNS", endpoint
+                return dest, set(), None, endpoint
         if protocol == 6 and len(data) >= 20:
             offset = (data[12] >> 4) * 4
             if 20 <= offset <= len(data):
@@ -377,8 +381,8 @@ class PacketDecoder:
                     (source, dest, number(data, 0), port), number(data, 4, 4),
                     data[13], data[offset:],
                 )
-                return dest, domains, "DNS" if port == 53 else "TLS SNI"
-        return dest, set(), None
+                return dest, domains, "DNS" if port == 53 else "TLS SNI", ("TCP", port) if port else None
+        return dest, set(), None, None
 
     def tcp(self, key, sequence, flags, payload):
         if not payload and not flags & 0x07:

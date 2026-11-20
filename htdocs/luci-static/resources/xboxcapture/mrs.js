@@ -222,7 +222,6 @@ return baseclass.extend({
 		importButton.disabled = disconnect.disabled = !token;
 		connect.disabled = password.disabled = !!token;
 		return E('div', { class: 'cbi-section' }, [
-			E('h3', {}, ['GitHub 与 MRS']),
 			field('GitHub 访问令牌', password),
 			E('p', {}, ['使用目标仓库 Contents 读写权限的 Personal Access Token。生成和合并 MRS 需要 Mihomo 内核。']),
 			E('p', {}, [connect, ' ', disconnect, ' ', importButton]),

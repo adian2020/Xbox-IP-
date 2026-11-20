@@ -5,12 +5,13 @@ import ipaddress
 from pathlib import Path
 import struct
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "root/usr/lib/xbox-capture"))
 
-from main import Session
+from main import Controller, Session, export_rules, result_entries
 from neighbours import capture_device, macs_from_arp, macs_from_neighbours
 from packets import LINK_ETHERNET, LINK_SLL2, Device, PacketDecoder, read_pcap
 
@@ -76,6 +77,45 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(session.summary["packet_count"], 2)
         self.assertEqual(session.summary["fakeip_count"], 1)
         self.assertEqual(session.summary["ip_count"], 0)
+
+    def test_ports_are_kept_for_ip_and_tls_domain(self):
+        device = Device(ADDRESS)
+        decoder = PacketDecoder(device)
+        session = Session("Game", "br-lan", device, device, 10, None)
+        target = packed("8.8.4.4")
+        udp = struct.pack(">HHHH", 18000, 3074, 8, 0)
+        ip = struct.pack(">BBHHHBBH", 0x45, 0, 28, 0, 0, 64, 17, 0)
+        ethernet = bytes.fromhex("0200000000010011223344550800")
+        observed = decoder.inspect(LINK_ETHERNET, ethernet + ip + packed(ADDRESS) + target + udp)
+        self.assertEqual(observed[3], ("UDP", 3074))
+        session.observe(*observed)
+        session.observe(target, {"game.example"}, "TLS SNI", ("TCP", 8443))
+        session.observe(packed("192.168.42.1"), {"dns-only.example"}, "DNS", ("UDP", 53))
+        result = session.result()
+        self.assertEqual(result_entries(result), [
+            {"value": "dns-only.example", "sources": ["DNS"]},
+            {"value": "game.example", "sources": ["TLS SNI"], "ports": [("TCP", 8443)]},
+            {"value": "8.8.4.4", "ports": [("TCP", 8443), ("UDP", 3074)]},
+        ])
+        rules = export_rules(result, "inline", "Xbox", "", 0)["yaml"]
+        self.assertIn('"IP-CIDR,8.8.4.4/32,Xbox,no-resolve"', rules)
+        self.assertNotIn("3074", rules)
+        self.assertNotIn("8443", rules)
+
+    def test_bulk_delete_validates_before_removing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            ids = ["1" * 32, "2" * 32, "3" * 32]
+            controller = Controller(Path(temp))
+            for id in ids:
+                controller.save({"summary": {"id": id, "started": 1}, "domains": [], "ips": []})
+            controller = Controller(Path(temp))
+            with self.assertRaises(ValueError):
+                controller.dispatch("remove_many", {"ids": [ids[0], "../invalid"]})
+            self.assertEqual(len(controller.history), 3)
+            response = controller.dispatch("remove_many", {"ids": [ids[0], ids[1], ids[0]]})
+            self.assertEqual(response, {"removed": ids[:2], "failed": []})
+            self.assertEqual(set(controller.history), {ids[2]})
+            self.assertEqual(list(Path(temp).glob("*.json")), [controller.path(ids[2])])
 
 
 if __name__ == "__main__":
