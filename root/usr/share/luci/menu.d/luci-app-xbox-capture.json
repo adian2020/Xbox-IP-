@@ -1,0 +1,8 @@
+{
+  "admin/services/xbox-capture": {
+    "title": "Xbox 网络录制",
+    "order": 85,
+    "action": { "type": "view", "path": "xbox-capture" },
+    "depends": { "acl": ["luci-app-xbox-capture"] }
+  }
+}

@@ -1,0 +1,6 @@
+#!/bin/sh
+[ "${IPKG_NO_SCRIPT:-}" = "1" ] && exit 0
+[ -n "${IPKG_INSTROOT:-}" ] && exit 0
+rm -f /tmp/luci-indexcache /tmp/luci-indexcache.*
+/etc/init.d/rpcd reload >/dev/null 2>&1
+exit 0
