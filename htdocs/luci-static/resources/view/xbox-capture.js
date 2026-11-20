@@ -66,6 +66,21 @@ function counts(session) {
 		' 个域名，' + session.ip_count + ' 个公网 IP';
 }
 
+function captureHint(session) {
+	if (session.packet_count === 0) {
+		if (session.frame_count)
+			return '已收到链路层报文，尚未识别到 Xbox 的 IPv4 或 IPv6 报文。请在主机上运行「测试网络连接」。';
+		return '还没收到目标报文。确认地址后，在 Xbox 上运行「测试网络连接」。若当前 LAN 接口仍为 0，可试 any。';
+	}
+	if (session.fakeip_count && !session.ip_count)
+		return '已收到 Fake-IP 流量（198.18.0.0/15）。这些地址会被排除在公网 IP 规则之外。';
+	if (session.packet_count > 0 && !session.ip_count && !session.domain_count)
+		return session.baseline
+			? '已收到目标报文，当前没有基线之外的域名或公网 IP。'
+			: '已收到目标报文，当前没有可导出的明文 DNS、TLS 域名或公网 IP。';
+	return '';
+}
+
 return view.extend({
 	handleSave: null,
 	handleSaveApply: null,
@@ -96,8 +111,8 @@ return view.extend({
 			placeholder: '例如 00:11:22:33:44:55'
 		});
 		const iface = E('input', { id: 'xbox-iface', type: 'text', value: 'br-lan', maxlength: 15, required: true });
-		const deviceField = field('Xbox 地址', device, '优先使用当前连接方式的 MAC 地址，以同时捕获 IPv4 和 IPv6。也可填写最多 4 个 IP，用逗号分隔。');
-		const ifaceField = field('LAN 接口', iface, '填写 Xbox 所在的设备名，例如 br-lan 或 br-lan.20。');
+		const deviceField = field('Xbox 地址', device, '可用 MAC 或局域网 IP。路由器能确认 MAC 时会同时匹配 IPv4 和 IPv6。');
+		const ifaceField = field('LAN 接口', iface, '例如 br-lan 或 br-lan.20。接口不确定时可填写 any。');
 		const minutes = E('input', { id: 'xbox-minutes', type: 'number', value: 120, min: 1, max: 360, required: true });
 		this.startButton = E('button', {
 			type: 'submit', class: 'btn cbi-button cbi-button-action', disabled: true
@@ -105,14 +120,15 @@ return view.extend({
 		this.stopButton = button('结束录制', () => this.changeCapture(() => stop()), 'cbi-button-remove');
 		this.stopButton.disabled = true;
 		this.statusText = E('p', { role: 'status' }, ['正在连接录制服务…']);
+		this.captureText = E('p', { class: 'cbi-value-description' });
 		this.history = E('div', {}, ['正在读取录制记录…']);
 		this.detail = E('div', { class: 'cbi-section', hidden: true });
 
 		const updateMode = () => {
 			const onlyNew = this.captureMode.value === 'new';
-			baselineField.hidden = !onlyNew;
+			baselineField.style.display = onlyNew ? '' : 'none';
 			this.baseline.disabled = !onlyNew;
-			deviceField.hidden = ifaceField.hidden = onlyNew;
+			deviceField.style.display = ifaceField.style.display = onlyNew ? 'none' : '';
 			device.disabled = iface.disabled = onlyNew;
 			this.updateBaselineDetails();
 		};
@@ -138,7 +154,8 @@ return view.extend({
 			baselineField,
 			field('最长录制时间（分钟）', minutes),
 			E('p', {}, [this.startButton, ' ', this.stopButton]),
-			this.statusText
+			this.statusText,
+			this.captureText
 		]);
 		const root = E('div', {}, [
 			E('h2', {}, ['Xbox 网络录制']),
@@ -167,6 +184,17 @@ return view.extend({
 				duration(active.elapsed) + ' · ' + counts(active);
 		if (this.statusText.textContent !== text)
 			this.statusText.textContent = text;
+		let hint = '';
+		if (available && active && Number.isInteger(active.packet_count)) {
+			const selector = active.capture_mac ? 'MAC ' + active.capture_mac : '当前填写的 IP';
+			hint = '接口 ' + active.interface + ' · ' + selector + ' · 收到 ' + active.packet_count + ' 个目标 IP 报文';
+			if (active.state === 'recording' && (active.elapsed >= 8 || active.packet_count)) {
+				const explanation = captureHint(active);
+				if (explanation)
+					hint += '。' + explanation;
+			}
+		}
+		this.captureText.textContent = hint;
 		this.startButton.disabled = this.busy || !available || !!active ||
 			(this.captureMode.value === 'new' && !this.baselines.has(this.baseline.value));
 		this.stopButton.disabled = this.busy || !available || !active || active.state === 'stopping';
@@ -367,6 +395,12 @@ return view.extend({
 			notes.push('已达到去重条目上限，部分地址或域名未保存。');
 		if (session.kernel_drops)
 			notes.push('内核丢失了 ' + session.kernel_drops + ' 个抓包数据包。');
+		if (Number.isInteger(session.packet_count)) {
+			const selector = session.capture_mac ? ' · MAC ' + session.capture_mac : '';
+			notes.push('收到 ' + session.packet_count + ' 个目标 IP 报文' + selector + '。');
+			if (!session.error && captureHint(session))
+				notes.push(captureHint(session));
+		}
 
 		this.detail.replaceChildren(
 			E('h3', {}, [session.name]),

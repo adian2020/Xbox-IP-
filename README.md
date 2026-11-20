@@ -4,20 +4,20 @@ OpenWrt 的 LuCI 插件。按 Xbox 的 MAC 地址或局域网 IP 开始一次录
 
 ## 安装
 
-将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.2.0 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.2.0)
+将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.2.1 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.2.1)
 
 **使用 opkg 的 OpenWrt（例如 23.05、24.10）**
 
 ```sh
 opkg update
-opkg install /tmp/luci-app-xbox-capture_1.2.0-1_all.ipk
+opkg install /tmp/luci-app-xbox-capture_1.2.1-1_all.ipk
 ```
 
 **使用 apk 的 OpenWrt（例如 25.12）**
 
 ```sh
 apk update
-apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.2.0-r1.apk
+apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.2.1-r1.apk
 ```
 
 这里的 `--allow-untrusted` 用于安装这一个本地未签名的 APK。安装完成后重新打开 LuCI，进入 **服务 → Xbox 网络录制**。也可以用 `ubus call xbox-capture status '{}'` 确认插件已注册。
@@ -100,6 +100,12 @@ rules:
 - IP 规则只包含 Xbox 实际访问的公网地址，使用单地址前缀 `/32` 或 `/128`。Clash Fake-IP、局域网、组播和常见保留地址会被排除。公共 DNS 服务器的 IP 如果被 Xbox 直接访问，也可能出现在列表中。
 - 如果结果很少，确认 Xbox 流量经过填写的 LAN 接口。硬件卸载、旁路网关和 VLAN 的抓包点会影响路由器能看到的数据。按 IP 录制时，用已解 VLAN 标签的 LAN 设备，并填入 Xbox 实际使用的 IPv4 和 IPv6 地址。
 - 最多保留 20 次录制，每次分别去重保存最多 2,000 个域名和 2,000 个 IP。录制时将抓包数据流交给解析器，只在 `/var/run/xbox-capture` 保存结果。路由器重启后临时记录会清空。
+
+### 录制时一直为 0
+
+1. 开始录制后，在 Xbox 的 **设置 → 常规 → 网络设置** 运行 **测试网络连接**，查看插件的 **目标 IP 报文** 计数。填写 IP 时，插件会尝试通过 LAN 邻居表识别 MAC。计数旁会显示实际采用的地址。
+2. 如果报文数仍为 0，确认用的是 Xbox 当前有线或无线连接的 MAC，把接口改为其 VLAN 或 `any`，再开始一轮录制。两种接口都为 0 时，确认 Xbox 以这台路由器为网关。如果启用了流量分载，可暂时关闭软件和硬件分载后重启游戏测试。
+3. 如果报文数在增加，但域名和公网 IP 都为 0，查看状态说明。收到 Fake-IP 时可针对 Xbox 使用真实 IP 的 DNS 模式后再录一次。只录新增时，基线已经包含的条目会正常排除。
 
 ## 命令行
 

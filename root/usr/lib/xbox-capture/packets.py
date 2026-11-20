@@ -62,7 +62,21 @@ class Device:
         self.filter = " or ".join("src host " + str(addr) for addr in addresses)
 
 
-def read_pcap(source, device):
+def capture_filter(device, cooked=False, vlan=False):
+    if cooked and device.mac:
+        # Linux cooked v2 records the sender's link-layer address on ingress.
+        prefix = int.from_bytes(device.mac[:4], "big")
+        suffix = int.from_bytes(device.mac[4:], "big")
+        return (
+            "link[8:2] = 1 and link[10] != 4 and link[11] = 6"
+            f" and link[12:4] = 0x{prefix:08x} and link[16:2] = 0x{suffix:04x}"
+        )
+    if vlan and not device.mac:
+        return f"({device.filter}) or (vlan and ({device.filter}))"
+    return device.filter
+
+
+def read_pcap(source):
     header = source.read(24)
     if not header:
         return
@@ -73,9 +87,7 @@ def read_pcap(source, device):
     link &= 0xffff
     if (major, minor) != (2, 4) or not 1 <= snaplen <= MAX_PACKET:
         raise ValueError("抓包程序提供了不支持的 PCAP 格式。")
-    if link not in (LINK_ETHERNET, LINK_SLL, LINK_SLL2) or (
-        device.mac and link != LINK_ETHERNET
-    ):
+    if link not in (LINK_ETHERNET, LINK_SLL, LINK_SLL2):
         raise ValueError("此接口的抓包格式不支持所选地址。请使用 Xbox 所在的 LAN 接口。")
 
     packet_header = struct.Struct(endian + "IIII")
@@ -100,9 +112,21 @@ def network_packet(link, frame, device):
             return
         ethertype, offset = number(frame, 12), 14
     elif link == LINK_SLL:
+        if len(frame) < 16 or (device.mac and (
+            number(frame, 0) == 4 or number(frame, 2) != 1 or
+            number(frame, 4) != 6 or frame[6:12] != device.mac
+        )):
+            return
         ethertype, offset = number(frame, 14), 16
-    else:
+    elif link == LINK_SLL2:
+        if len(frame) < 20 or (device.mac and (
+            number(frame, 8) != 1 or frame[10] == 4 or
+            frame[11] != 6 or frame[12:18] != device.mac
+        )):
+            return
         ethertype, offset = number(frame, 0), 20
+    else:
+        return
 
     for _ in range(4):
         if ethertype not in VLAN_TYPES:

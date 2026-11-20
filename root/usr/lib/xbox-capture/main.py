@@ -17,7 +17,8 @@ import tempfile
 import threading
 import time
 
-from packets import Device, PacketDecoder, SNAPLEN, is_public, read_pcap
+from neighbours import capture_device
+from packets import Device, PacketDecoder, SNAPLEN, capture_filter, is_public, read_pcap
 
 STATE = Path(os.environ.get("XBOX_CAPTURE_STATE_DIR", "/var/run/xbox-capture"))
 METHODS = {
@@ -121,12 +122,15 @@ def export_rules(result, format, policy, omit, offset):
 
 
 class Session:
-    def __init__(self, name, interface, device, minutes, baseline):
+    def __init__(self, name, interface, device, selector, minutes, baseline):
         self.summary = {
             "id": os.urandom(16).hex(), "name": name, "interface": interface, "device": device.label,
             "started": epoch(), "ended": None, "state": "recording", "minutes": minutes,
             "domain_count": 0, "ip_count": 0, "truncated": False, "kernel_drops": None,
+            "frame_count": 0, "packet_count": 0, "fakeip_count": 0,
         }
+        if selector.mac:
+            self.summary["capture_mac"] = selector.label
         self.baseline_domains = set()
         self.baseline_addresses = set()
         if baseline is not None:
@@ -134,7 +138,7 @@ class Session:
             self.summary["baseline"] = {"id": reference["id"], "name": reference["name"]}
             self.baseline_domains = {entry["value"] for entry in baseline["domains"]}
             self.baseline_addresses = {ipaddress.ip_address(value).packed for value in baseline["ips"]}
-        self.decoder = PacketDecoder(device)
+        self.decoder = PacketDecoder(selector)
         self.process = None
         self.domains = {}
         self.addresses = set()
@@ -143,8 +147,10 @@ class Session:
         self.timer = None
 
     def observe(self, dest, domains, origin):
-        if (dest is not None and dest not in self.baseline_addresses
-                and dest not in self.addresses and is_public(dest)):
+        self.summary["packet_count"] += 1
+        if len(dest) == 4 and dest[0] == 198 and dest[1] in (18, 19):
+            self.summary["fakeip_count"] += 1
+        elif dest not in self.baseline_addresses and dest not in self.addresses and is_public(dest):
             if len(self.addresses) < MAX_ENTRIES:
                 self.addresses.add(dest)
                 self.summary["ip_count"] = len(self.addresses)
@@ -222,16 +228,28 @@ class Controller:
 
             if not isinstance(interface, str) or not INTERFACE.fullmatch(interface):
                 raise ValueError("请输入有效的 LAN 接口名称，例如 br-lan。")
-            try:
-                socket.if_nametoindex(interface)
-            except OSError:
-                raise ValueError(f"接口 {interface} 不存在。请填写设备名，例如 br-lan。") from None
+            cooked = interface == "any"
+            vlan = False
+            if not cooked:
+                try:
+                    socket.if_nametoindex(interface)
+                except OSError:
+                    raise ValueError(f"接口 {interface} 不存在。可填写 LAN 设备名或 any。") from None
+                try:
+                    vlan = (Path("/sys/class/net") / interface / "type").read_text().strip() == "1"
+                except OSError:
+                    pass
 
-            session = Session(name, interface, device, minutes, baseline)
+            previous_mac = baseline["summary"].get("capture_mac") if baseline else None
+            selector = capture_device(device, interface, previous_mac)
+            session = Session(name, interface, device, selector, minutes, baseline)
             command = [
-                "tcpdump", "-n", "-p", "-U", "-s", str(SNAPLEN), "-B", "512",
-                "-i", interface, "-w", "-", device.filter,
+                "tcpdump", "-n", "-p", "-U", "--immediate-mode", "-s", str(SNAPLEN), "-B", "512",
+                "-i", interface,
             ]
+            if cooked:
+                command += ["-y", "LINUX_SLL2"]
+            command += ["-w", "-", capture_filter(selector, cooked=cooked, vlan=vlan)]
             error_log = tempfile.TemporaryFile(dir=self.directory)
             try:
                 session.process = subprocess.Popen(
@@ -271,10 +289,11 @@ class Controller:
         error = None
         try:
             with process.stdout as source:
-                for link, frame in read_pcap(source, session.decoder.device):
+                for link, frame in read_pcap(source):
                     observed = session.decoder.inspect(link, frame)
-                    if observed[0] is not None:
-                        with self.lock:
+                    with self.lock:
+                        session.summary["frame_count"] += 1
+                        if observed[0] is not None:
                             session.observe(*observed)
         except (OSError, ValueError) as exc:
             error = str(exc)
