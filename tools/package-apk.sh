@@ -36,7 +36,7 @@ SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-0} "${XBOX_FAKEROOT:-fakeroot}" -- \
 	"${XBOX_APK:-apk}" mkpkg \
 	--info "name:$name" --info "version:$version-r$release" --info 'arch:noarch' \
 	--info 'description:Xbox traffic capture and Clash rule export' \
-	--info 'depends:luci-base rpcd tcpdump python3-light python3-urllib python3-openssl ca-bundle' \
+	--info 'depends:luci-base rpcd tcpdump python3-light python3-urllib python3-openssl python3-codecs ca-bundle' \
 	--script "post-install:$build/post-install" --script "post-upgrade:$build/post-upgrade" \
 	--script "pre-deinstall:$build/pre-deinstall" --script "post-deinstall:$project/tools/ipk-control/postrm" \
 	--files "$build/data" --output "$file"

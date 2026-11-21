@@ -535,19 +535,27 @@ class RPCHandler(socketserver.StreamRequestHandler):
             response = self.server.controller.dispatch(request.get("method"), request["args"])
         except (ValueError, OSError) as exc:
             response = {"error": str(exc)}
+        except Exception as exc:
+            print(f"xbox-capture: RPC 处理失败 ({type(exc).__name__})", file=sys.stderr)
+            response = {"error": "录制服务处理请求时出错。请查看路由器系统日志。"}
         try:
             self.wfile.write(dumps(response).encode() + b"\n")
         except OSError:
             pass
 
 
-def load_line(stream, limit, allow_empty=False):
+def load_line(stream, limit, allow_empty=False, empty_message="RPC 请求为空。"):
     line = stream.readline(limit + 1)
     if not line and allow_empty:
         return {}
-    if not line or len(line) > limit:
-        raise ValueError("RPC 消息为空或过大。")
-    value = json.loads(line)
+    if not line:
+        raise ValueError(empty_message)
+    if len(line) > limit:
+        raise ValueError("RPC 消息超过大小限制。")
+    try:
+        value = json.loads(line)
+    except ValueError:
+        raise ValueError("RPC 消息格式无效。") from None
     if not isinstance(value, dict):
         raise ValueError("RPC 消息格式无效。")
     return value
@@ -591,7 +599,8 @@ def call(method, args):
             connection.connect(str(STATE / "rpc.sock"))
             connection.sendall(dumps({"method": method, "args": args}).encode() + b"\n")
             with connection.makefile("rb") as stream:
-                return load_line(stream, MAX_RESPONSE)
+                return load_line(stream, MAX_RESPONSE,
+                                 empty_message="录制服务未返回结果。请查看路由器系统日志。")
     except OSError:
         return {"error": "录制服务未响应。请检查 /etc/init.d/xbox-capture status。"}
     except ValueError as exc:

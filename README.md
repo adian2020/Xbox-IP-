@@ -4,20 +4,20 @@ OpenWrt 的 LuCI 插件。按 Xbox 的 MAC 地址或局域网 IP 开始一次录
 
 ## 安装
 
-将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.4.0 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.4.0)
+将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.4.1 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.4.1)
 
 **使用 opkg 的 OpenWrt（例如 23.05、24.10）**
 
 ```sh
 opkg update
-opkg install /tmp/luci-app-xbox-capture_1.4.0-1_all.ipk
+opkg install /tmp/luci-app-xbox-capture_1.4.1-1_all.ipk
 ```
 
 **使用 apk 的 OpenWrt（例如 25.12）**
 
 ```sh
 apk update
-apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.4.0-r1.apk
+apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.4.1-r1.apk
 ```
 
 这里的 `--allow-untrusted` 用于安装这一个本地未签名的 APK。安装完成后重新打开 LuCI，进入 **服务 → Xbox 网络录制**。也可以用 `ubus call xbox-capture status '{}'` 确认插件已注册。

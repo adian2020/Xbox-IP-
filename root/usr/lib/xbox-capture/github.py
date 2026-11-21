@@ -1,6 +1,8 @@
 """Publish both MRS rule sets as a single GitHub commit."""
 
 import base64
+from codecs import lookup
+from http.client import HTTPException
 import json
 import re
 from urllib.error import HTTPError, URLError
@@ -59,6 +61,10 @@ class GitHub:
     def __init__(self, token):
         if not isinstance(token, str) or not TOKEN.fullmatch(token):
             raise ValueError("请输入有效的 GitHub Personal Access Token。")
+        try:
+            lookup("idna")
+        except (ImportError, LookupError):
+            raise ValueError("GitHub HTTPS 登录需要 Python 编码组件，请安装 python3-codecs。") from None
         self.token = token
         self.opener = build_opener(ProxyHandler({}), NoRedirect())
 
@@ -85,7 +91,7 @@ class GitHub:
                 422: "GitHub 拒绝更新分支。请检查目标分支是否允许提交。",
             }
             raise GitHubError(status, messages.get(status, f"GitHub 请求失败（HTTP {status}）。")) from None
-        except (URLError, OSError):
+        except (URLError, OSError, HTTPException):
             raise ValueError("无法连接 GitHub API。请检查路由器网络、系统时间和 CA 证书。") from None
         if len(data) > MAX_RESPONSE:
             raise ValueError("GitHub 响应过大。")

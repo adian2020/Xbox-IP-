@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-xbox-capture
-PKG_VERSION:=1.4.0
+PKG_VERSION:=1.4.1
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
@@ -11,7 +11,7 @@ define Package/luci-app-xbox-capture
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=Xbox traffic capture and Clash rule export
-  DEPENDS:=+luci-base +rpcd +tcpdump +python3-light +python3-urllib +python3-openssl +ca-bundle
+  DEPENDS:=+luci-base +rpcd +tcpdump +python3-light +python3-urllib +python3-openssl +python3-codecs +ca-bundle
   PKGARCH:=all
 endef
 

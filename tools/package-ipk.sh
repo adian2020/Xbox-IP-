@@ -21,7 +21,7 @@ installed_size=$(find "$build/data" -type f -exec wc -c {} + | awk 'END{print $1
 cat > "$build/control/control" <<EOF
 Package: $name
 Version: $version-$release
-Depends: luci-base, rpcd, tcpdump, python3-light, python3-urllib, python3-openssl, ca-bundle
+Depends: luci-base, rpcd, tcpdump, python3-light, python3-urllib, python3-openssl, python3-codecs, ca-bundle
 Section: luci
 Architecture: all
 Installed-Size: $installed_size
