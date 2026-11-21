@@ -493,3 +493,259 @@
 
 	#xbox-capture .xbox-primary { color: #183f31; }
 }
+
+#xbox-capture .xbox-device-control {
+	display: grid;
+	gap: 5px;
+	min-width: 0;
+}
+
+#xbox-capture .xbox-device-input,
+#xbox-capture .xbox-device-search,
+#xbox-capture .xbox-live-actions {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+}
+
+#xbox-capture .xbox-device-input input,
+#xbox-capture .xbox-device-search input {
+	flex: 1;
+}
+
+#xbox-capture .xbox-device-selection {
+	overflow-wrap: anywhere;
+}
+
+#xbox-capture .xbox-device-picker {
+	padding: 10px;
+	border: 1px solid var(--xbox-line);
+	border-radius: 9px;
+	background: var(--xbox-wash);
+}
+
+#xbox-capture .xbox-device-picker p {
+	margin: 8px 0;
+}
+
+#xbox-capture .xbox-device-list,
+#xbox-capture .xbox-monitor-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+#xbox-capture .xbox-device-list {
+	display: grid;
+	gap: 4px;
+	max-height: 280px;
+	overflow: auto;
+}
+
+#xbox-capture .xbox-device-option {
+	width: 100%;
+	display: grid;
+	gap: 4px;
+	padding: 8px 9px;
+	border: 1px solid var(--xbox-line);
+	border-radius: 7px;
+	color: var(--xbox-ink);
+	background: var(--xbox-surface);
+	text-align: left;
+	font: inherit;
+	cursor: pointer;
+}
+
+#xbox-capture .xbox-device-option:hover {
+	border-color: var(--xbox-accent);
+	background: var(--xbox-accent-soft);
+}
+
+#xbox-capture .xbox-device-name,
+#xbox-capture .xbox-device-option small {
+	overflow-wrap: anywhere;
+}
+
+#xbox-capture .xbox-device-ips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
+#xbox-capture .xbox-device-ip {
+	min-width: 0;
+	padding: 1px 4px;
+	border-radius: 3px;
+	background: var(--xbox-wash);
+	color: var(--xbox-accent);
+	font-variant-numeric: tabular-nums;
+	font-size: .82rem;
+	overflow-wrap: anywhere;
+}
+
+#xbox-capture .xbox-live-actions {
+	margin-top: 10px;
+}
+
+#xbox-capture .xbox-monitor-trigger {
+	color: var(--xbox-accent);
+	border-color: var(--xbox-accent);
+}
+
+#xbox-capture .xbox-monitor {
+	--monitor-surface: #203d34;
+	--monitor-line: #386155;
+	--monitor-ink: #edf7f1;
+	--monitor-muted: #b9d5c9;
+	--monitor-accent: #a9eacc;
+	padding: 17px;
+	border: 1px solid var(--monitor-line);
+	background: linear-gradient(135deg, #162d26 25%, #173b31);
+	color: var(--monitor-ink);
+	scroll-margin-top: 60px;
+	color-scheme: dark;
+}
+
+#xbox-capture .xbox-monitor h3 {
+	color: var(--monitor-ink);
+}
+
+#xbox-capture .xbox-monitor-head,
+#xbox-capture .xbox-monitor-head-actions,
+#xbox-capture .xbox-monitor-controls,
+#xbox-capture .xbox-monitor-foot {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+#xbox-capture .xbox-monitor-head,
+#xbox-capture .xbox-monitor-foot {
+	justify-content: space-between;
+}
+
+#xbox-capture .xbox-monitor-head > div:first-child {
+	min-width: 0;
+}
+
+#xbox-capture .xbox-monitor-context {
+	margin: 4px 0 0;
+	color: var(--monitor-muted);
+	font-size: .86rem;
+	overflow-wrap: anywhere;
+}
+
+#xbox-capture .xbox-monitor-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 6px;
+	border: 1px solid var(--monitor-line);
+	border-radius: 5px;
+	color: var(--monitor-muted);
+	font-size: .79rem;
+	white-space: nowrap;
+}
+
+#xbox-capture .xbox-monitor-badge[data-live='true'] {
+	color: var(--monitor-accent);
+}
+
+#xbox-capture .xbox-monitor-badge[data-live='true']::before {
+	content: '';
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--monitor-accent);
+}
+
+#xbox-capture .xbox-monitor input[type='search'],
+#xbox-capture .xbox-monitor select,
+#xbox-capture .xbox-monitor .xbox-button {
+	min-height: 36px;
+	padding: 6px 9px;
+	border: 1px solid var(--monitor-line);
+	border-radius: 7px;
+	color: var(--monitor-ink);
+	background: var(--monitor-surface);
+}
+
+#xbox-capture .xbox-monitor input[type='search'] {
+	flex: 1 1 190px;
+	min-width: 0;
+	margin: 0;
+	font: inherit;
+}
+
+#xbox-capture .xbox-monitor input::placeholder {
+	color: var(--monitor-muted);
+}
+
+#xbox-capture .xbox-monitor select {
+	padding-right: 1.55em;
+}
+
+#xbox-capture .xbox-monitor .xbox-button:hover:not(:disabled) {
+	border-color: var(--monitor-accent);
+}
+
+#xbox-capture .xbox-monitor > .xbox-monitor-controls {
+	margin-top: 12px;
+}
+
+#xbox-capture .xbox-monitor-list {
+	margin: 9px 0;
+	max-height: 395px;
+	overflow: auto;
+	border-radius: 8px;
+}
+
+#xbox-capture .xbox-monitor-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) max-content;
+	align-items: center;
+	gap: 4px 9px;
+	padding: 8px 10px;
+	border-bottom: 1px solid var(--monitor-line);
+	background: #1b342c;
+}
+
+#xbox-capture .xbox-monitor-row:nth-child(even) {
+	background: #203a31;
+}
+
+#xbox-capture .xbox-monitor-target {
+	min-width: 0;
+	display: grid;
+	gap: 2px;
+	overflow-wrap: anywhere;
+}
+
+#xbox-capture .xbox-monitor-target small,
+#xbox-capture .xbox-monitor time,
+#xbox-capture .xbox-monitor-message {
+	color: var(--monitor-muted);
+	font-size: .83rem;
+}
+
+#xbox-capture .xbox-monitor time {
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+#xbox-capture .xbox-monitor .xbox-port {
+	background: #2c5244;
+	color: #bef3db;
+}
+
+#xbox-capture .xbox-monitor .xbox-port[data-protocol='UDP'] {
+	background: #534525;
+	color: #ffe099;
+}
+
+@media (max-width: 540px) {
+	#xbox-capture .xbox-monitor { padding: 11px; }
+	#xbox-capture .xbox-monitor-row { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
+	#xbox-capture .xbox-monitor time { grid-column: 1 / -1; }
+}

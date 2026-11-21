@@ -1,6 +1,7 @@
 """LuCI RPC, session control, and Clash export for Xbox Capture."""
 
 import argparse
+from collections import OrderedDict
 import fcntl
 import ipaddress
 import json
@@ -18,11 +19,14 @@ import threading
 import time
 
 from neighbours import capture_device
+from devices import discover_devices
 from packets import Device, PacketDecoder, SNAPLEN, capture_filter, is_public, read_pcap
 
 STATE = Path(os.environ.get("XBOX_CAPTURE_STATE_DIR", "/var/run/xbox-capture"))
 METHODS = {
     "status": {},
+    "devices": {"interface": "", "offset": 0},
+    "live": {"id": "", "kind": "", "query": "", "offset": 0},
     "start": {"name": "", "interface": "", "device": "", "minutes": 0, "baseline_id": ""},
     "stop": {},
     "sessions": {},
@@ -45,6 +49,7 @@ MAX_HISTORY = 20
 MAX_REQUEST = 16 * 1024
 MAX_RESPONSE = 48 * 1024
 PAGE_BYTES = 20 * 1024
+LIVE_ROWS = 24
 SESSION_ID = re.compile(r"[0-9a-f]{32}")
 INTERFACE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,14}")
 BASELINE_STATES = {"stopped", "timeout", "shutdown"}
@@ -152,6 +157,7 @@ class Session:
         self.address_ports = {}
         self.domain_ports = {}
         self.port_total = 0
+        self.recent = OrderedDict()
         self.started = time.monotonic()
         self.reason = None
         self.timer = None
@@ -159,49 +165,85 @@ class Session:
     def remember_port(self, targets, value, endpoint):
         ports = targets.get(value, ())
         if endpoint in ports:
-            return
+            return False
         if self.port_total >= MAX_SESSION_PORTS or len(ports) >= MAX_TARGET_PORTS:
             self.summary["ports_truncated"] = True
-            return
+            return False
         targets.setdefault(value, set()).add(endpoint)
         self.port_total += 1
+        return True
+
+    def touch(self, kind, value):
+        key = (kind, value)
+        self.recent[key] = epoch()
+        self.recent.move_to_end(key)
 
     def observe(self, dest, domains, origin, endpoint=None):
         self.summary["packet_count"] += 1
+        new_address = False
         if len(dest) == 4 and dest[0] == 198 and dest[1] in (18, 19):
             self.summary["fakeip_count"] += 1
         elif dest not in self.baseline_addresses and dest not in self.addresses and is_public(dest):
             if len(self.addresses) < MAX_ENTRIES:
                 self.addresses.add(dest)
                 self.summary["ip_count"] = len(self.addresses)
+                new_address = True
             else:
                 self.summary["truncated"] = True
-        if endpoint and dest in self.addresses:
-            self.remember_port(self.address_ports, dest, endpoint)
+        new_port = endpoint and dest in self.addresses and self.remember_port(self.address_ports, dest, endpoint)
+        if new_address or new_port:
+            self.touch("ip", dest)
         for domain in domains:
             if domain in self.baseline_domains:
                 continue
-            if domain in self.domains:
-                self.domains[domain].add(origin)
-            elif len(self.domains) < MAX_ENTRIES:
-                self.domains[domain] = {origin}
-                self.summary["domain_count"] = len(self.domains)
-            else:
+            if domain not in self.domains and len(self.domains) >= MAX_ENTRIES:
                 self.summary["truncated"] = True
                 continue
-            if origin == "TLS SNI" and endpoint:
-                self.remember_port(self.domain_ports, domain, endpoint)
+            sources = self.domains.setdefault(domain, set())
+            new_source = origin not in sources
+            sources.add(origin)
+            self.summary["domain_count"] = len(self.domains)
+            new_port = origin == "TLS SNI" and endpoint and self.remember_port(self.domain_ports, domain, endpoint)
+            if new_source or new_port:
+                self.touch("domain", domain)
+
+    def entry(self, kind, value):
+        if kind == "domain":
+            entry = {"value": value, "sources": sorted(self.domains[value])}
+            ports = self.domain_ports.get(value)
+        else:
+            entry = {"value": str(ipaddress.ip_address(value))}
+            ports = self.address_ports.get(value)
+        if ports:
+            entry["ports"] = sorted(ports)
+        return entry
+
+    def live_page(self, kind, query, offset):
+        matching = []
+        for key in reversed(self.recent):
+            entry_kind, value = key
+            if kind != "all" and entry_kind != kind:
+                continue
+            if query:
+                target = value if entry_kind == "domain" else str(ipaddress.ip_address(value))
+                ports = (self.domain_ports if entry_kind == "domain" else self.address_ports).get(value, ())
+                if query not in target and not any(query in f"{proto.lower()} {port}" for proto, port in ports):
+                    continue
+            matching.append(key)
+        total = len(matching)
+        start = min(offset, ((total - 1) // LIVE_ROWS) * LIVE_ROWS) if total else 0
+        end = min(start + LIVE_ROWS, total)
+        return {
+            "id": self.summary["id"], "total": total, "offset": start,
+            "previous": max(0, start - LIVE_ROWS) if start else None,
+            "next": end if end < total else None,
+            "entries": [dict(self.entry(*key), kind=key[0], seen=self.recent[key]) for key in matching[start:end]],
+        }
 
     def result(self):
-        domains = []
-        for value in sorted(self.domains):
-            entry = {"value": value, "sources": sorted(self.domains[value])}
-            if value in self.domain_ports:
-                entry["ports"] = sorted(self.domain_ports[value])
-            domains.append(entry)
         return {
             "summary": self.summary,
-            "domains": domains,
+            "domains": [self.entry("domain", value) for value in sorted(self.domains)],
             "ips": [str(ipaddress.ip_address(value))
                     for value in sorted(self.addresses, key=lambda value: (len(value), value))],
             "ip_ports": {str(ipaddress.ip_address(value)): sorted(ports)
@@ -215,6 +257,7 @@ class Controller:
 
         self.directory = directory
         self.publisher = Publisher(directory)
+        self.device_snapshot = None
         self.active = None
         self.lock = threading.Lock()
         self.unsaved = {}
@@ -231,6 +274,27 @@ class Controller:
             if not self.active:
                 return {"active": None}
             return {"active": {**self.active.summary, "elapsed": int(time.monotonic() - self.active.started)}}
+
+    def devices(self, interface, offset):
+        if not isinstance(interface, str) or not INTERFACE.fullmatch(interface):
+            raise ValueError("请填写有效的 LAN 接口。")
+        snapshot = self.device_snapshot
+        now = time.monotonic()
+        if offset == 0 or not snapshot or snapshot[0] != interface or now - snapshot[1] > 10:
+            records, truncated = discover_devices(interface)
+            snapshot = self.device_snapshot = (interface, now, records, truncated)
+        rows, next_offset = page(snapshot[2], offset, lambda entry: len(dumps(entry).encode()) + 1)
+        return {"devices": rows, "next": next_offset, "truncated": snapshot[3]}
+
+    def live(self, id, kind, query, offset):
+        self.path(id)
+        if (kind not in ("all", "ip", "domain") or not isinstance(query, str) or len(query) > 128
+                or type(offset) is not int or not 0 <= offset <= 2 * MAX_ENTRIES):
+            raise ValueError("实时面板参数无效。")
+        with self.lock:
+            if self.active is not None and self.active.summary["id"] == id:
+                return self.active.live_page(kind, query.strip().lower(), offset)
+        return {"id": None}
 
     def start(self, name, interface, device, minutes, baseline_id=""):
         name = label(name, "请输入游戏或软件名称，最多 64 个字符。")
@@ -416,6 +480,10 @@ class Controller:
     def dispatch(self, method, args):
         if method == "status":
             return self.status()
+        if method == "devices":
+            return self.devices(args.get("interface"), args.get("offset", 0))
+        if method == "live":
+            return self.live(args.get("id"), args.get("kind", "all"), args.get("query", ""), args.get("offset", 0))
         if method == "start":
             return self.start(args.get("name"), args.get("interface"), args.get("device"),
                               args.get("minutes"), args.get("baseline_id", ""))

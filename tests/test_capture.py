@@ -11,7 +11,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "root/usr/lib/xbox-capture"))
 
-from main import Controller, Session, export_rules, result_entries
+from main import LIVE_ROWS, Controller, Session, export_rules, result_entries
+from devices import device_records, dnsmasq_leases, interface_scopes, neighbour_rows
 from neighbours import capture_device, macs_from_arp, macs_from_neighbours
 from packets import LINK_ETHERNET, LINK_SLL2, Device, PacketDecoder, read_pcap
 
@@ -34,6 +35,62 @@ def cooked(source=MAC, packet_type=0):
 
 
 class CaptureTests(unittest.TestCase):
+    def test_device_picker_merges_leases_and_neighbours(self):
+        scope = interface_scopes([
+            {"interface": "lan", "up": True, "l3_device": "br-lan",
+             "ipv4-address": [{"address": "192.168.42.1", "mask": 24}]},
+            {"interface": "guest", "up": True, "l3_device": "br-guest",
+             "ipv4-address": [{"address": "192.168.50.1", "mask": 24}]},
+            {"interface": "wan", "up": True, "l3_device": "eth1",
+             "ipv4-address": [{"address": "192.168.99.2", "mask": 24}]},
+        ], "br-lan")
+        neighbours = neighbour_rows(
+            f"{ADDRESS} dev br-lan lladdr {MAC} REACHABLE\n"
+            f"fe80::42 dev br-lan lladdr {MAC} STALE\n"
+            "192.168.50.23 dev br-guest lladdr 00:11:22:33:44:66 FAILED\n"
+            "192.168.99.1 dev eth1 lladdr 00:11:22:33:44:99 REACHABLE\n", "", scope
+        )
+        leases = [
+            {"ipaddr": ADDRESS, "hostname": "xbox-dhcp", "macaddr": MAC, "expires": 180},
+            {"ipaddr": ADDRESS, "hostname": "old-host", "macaddr": "00:11:22:33:44:77", "expires": 180},
+            {"ipaddr": "192.168.50.23", "hostname": "guest", "macaddr": "00:11:22:33:44:66", "expires": False},
+            {"ipaddr": "192.168.50.24", "hostname": "expired", "macaddr": "00:11:22:33:44:88", "expires": 0},
+        ]
+        records = {item["mac"]: item for item in device_records(scope, neighbours, leases, {MAC: "Xbox 客厅"})}
+        self.assertEqual(set(records), {MAC, "00:11:22:33:44:66"})
+        self.assertEqual(records[MAC], {
+            "mac": MAC, "name": "Xbox 客厅", "interfaces": ["br-lan"], "ips": [ADDRESS, "fe80::42"],
+        })
+        self.assertEqual(records["00:11:22:33:44:66"]["interfaces"], ["br-guest"])
+        self.assertEqual(list(dnsmasq_leases(
+            f"4 {MAC} {ADDRESS} expired *\n0 {MAC} {ADDRESS} Xbox *", 8
+        )), [{"macaddr": MAC, "ipaddr": ADDRESS, "hostname": "Xbox"}])
+
+    def test_live_panel_pages_and_searches_active_capture(self):
+        with tempfile.TemporaryDirectory() as temp:
+            controller = Controller(Path(temp))
+            device = Device(ADDRESS)
+            active = Session("Game", "br-lan", device, device, 10, None)
+            controller.active = active
+            for number in range(LIVE_ROWS + 4):
+                active.observe(packed("8.8.4.4"), {f"game{number}.example"}, "TLS SNI", ("TCP", 443))
+            active.observe(packed("8.8.4.4"), set(), None, ("UDP", 3074))
+            active.observe(packed("8.8.4.4"), set(), None, ("UDP", 3074))
+            active.observe(packed("198.18.0.1"), set(), None, ("UDP", 3075))
+            args = {"id": active.summary["id"]}
+            first = controller.dispatch("live", args)
+            self.assertEqual(len(first["entries"]), LIVE_ROWS)
+            self.assertEqual(first["total"], LIVE_ROWS + 5)
+            self.assertEqual(first["entries"][0]["ports"], [("TCP", 443), ("UDP", 3074)])
+            self.assertEqual(first["next"], LIVE_ROWS)
+            second = controller.dispatch("live", {**args, "offset": first["next"]})
+            self.assertEqual(len(second["entries"]), 5)
+            domains = controller.dispatch("live", {**args, "kind": "domain", "query": "game0"})
+            self.assertEqual([row["value"] for row in domains["entries"]], ["game0.example"])
+            ip = controller.dispatch("live", {**args, "query": "udp 3074"})
+            self.assertEqual([row["value"] for row in ip["entries"]], ["8.8.4.4"])
+            self.assertEqual(controller.dispatch("live", {"id": "f" * 32}), {"id": None})
+
     def test_neighbour_scope(self):
         neighbours = (
             f"{ADDRESS} dev br-lan lladdr {MAC} STALE\n"

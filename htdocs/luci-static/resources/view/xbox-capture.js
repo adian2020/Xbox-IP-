@@ -4,6 +4,7 @@
 'require poll';
 'require ui';
 'require xboxcapture.mrs as mrs';
+'require xboxcapture.monitor as monitor';
 
 const object = 'xbox-capture';
 const status = rpc.declare({ object, method: 'status', raise: true });
@@ -39,10 +40,10 @@ function button(text, handler, style) {
 	return E('button', { type: 'button', class: 'xbox-button ' + (style || ''), click: handler }, [text]);
 }
 
-function field(text, input, hint, wide) {
+function field(text, input, hint, wide, control = input) {
 	return E('div', { class: 'xbox-field' + (wide ? ' xbox-field-wide' : '') }, [
 		E('label', { for: input.id }, [text]),
-		input,
+		control,
 		typeof hint === 'string' ? E('small', { class: 'xbox-muted' }, [hint]) : hint || ''
 	]);
 }
@@ -106,6 +107,7 @@ return view.extend({
 		this.historyRequest = 0;
 		this.hasHistory = false;
 		this.detailId = null;
+		this.liveMonitor = monitor.captureMonitor(id => this.openSession(id, true));
 
 		const name = E('input', {
 			id: 'xbox-game', type: 'text', maxlength: 64, required: true, placeholder: '例如 Forza Horizon 5'
@@ -124,7 +126,8 @@ return view.extend({
 			placeholder: '例如 00:11:22:33:44:55'
 		});
 		const iface = E('input', { id: 'xbox-iface', type: 'text', value: 'br-lan', maxlength: 15, required: true });
-		const deviceField = field('Xbox 地址', device, '填写 MAC 或局域网 IP。', true);
+		const deviceField = field('Xbox 地址', device, '可选择已发现的设备，也可填写 MAC 或局域网 IP。',
+			true, monitor.devicePicker(device, iface));
 		const ifaceField = field('LAN 接口', iface, '可填 br-lan、VLAN 接口或 any。');
 		const minutes = E('input', { id: 'xbox-minutes', type: 'number', value: 120, min: 1, max: 360, required: true });
 		this.startButton = E('button', {
@@ -190,7 +193,7 @@ return view.extend({
 			E('div', { class: 'xbox-actions xbox-field-wide' }, [this.startButton, this.stopButton])
 		]);
 		const root = E('div', { id: 'xbox-capture' }, [
-			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.3.0' }),
+			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.4.0' }),
 			E('header', { class: 'xbox-heading' }, [
 				E('h2', {}, ['Xbox 网络录制']),
 				E('p', { class: 'xbox-muted' }, ['先开始录制，再打开游戏。'])
@@ -205,9 +208,11 @@ return view.extend({
 						metric(this.domainValue, '域名'),
 						metric(this.ipValue, '公网 IP')
 					]),
-					this.captureText
+					this.captureText,
+					E('div', { class: 'xbox-live-actions' }, [this.liveMonitor.button])
 				])
 			]),
+			this.liveMonitor.panel,
 			E('section', { class: 'xbox-panel xbox-history' }, [
 				E('div', { class: 'xbox-panel-head' }, [
 					E('h3', {}, ['录制记录']),
@@ -257,6 +262,7 @@ return view.extend({
 		}
 		this.captureText.textContent = hint;
 		this.captureText.hidden = !hint;
+		this.liveMonitor.update(active, available);
 		this.startButton.disabled = this.busy || !available || !!active ||
 			(this.captureMode.value === 'new' && !this.baselines.has(this.baseline.value));
 		this.stopButton.disabled = this.busy || !available || !active || active.state === 'stopping';
@@ -476,8 +482,7 @@ return view.extend({
 					updateSelected();
 				});
 				const source = entry.sources ? entry.sources.join(' / ') : entry.value.includes(':') ? 'IPv6' : 'IPv4';
-				const ports = (entry.ports || []).map(([protocol, port]) =>
-					E('span', { class: 'xbox-port', 'data-protocol': protocol }, [protocol + ' ' + port]));
+				const ports = monitor.ports(entry);
 				return E('div', { class: 'xbox-result-row', role: 'row' }, [
 					E('div', { role: 'cell' }, [
 						E('label', { class: 'xbox-result-label' }, [choice,
