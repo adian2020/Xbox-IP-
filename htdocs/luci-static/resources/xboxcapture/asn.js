@@ -6,6 +6,8 @@ const status = rpc.declare({ object: 'xbox-capture', method: 'asn_status', raise
 const update = rpc.declare({ object: 'xbox-capture', method: 'asn_update', raise: true });
 
 const namesByAsn = {
+	3462: '中华电信',
+	4134: '中国电信',
 	24547: '中国移动（河北）',
 	45090: '腾讯云',
 	56041: '中国移动（浙江）',
@@ -15,6 +17,7 @@ const namesByAsn = {
 	132203: '腾讯云'
 };
 const organizationAliases = [
+	[/\bakamai\b/i, '阿卡迈'],
 	[/\b(?:alibaba|aliyun)\b/i, '阿里云'],
 	[/china mobile international|\bcmi-int-/i, '中国移动国际'],
 	[/china ?mobile|\bcmnet-/i, '中国移动'],
@@ -27,11 +30,46 @@ const organizationAliases = [
 	[/\bbaidu\b/i, '百度'],
 	[/kingsoft cloud|\bksyun\b/i, '金山云'],
 	[/\bbytedance\b/i, '字节跳动'],
+	[/china education and research network|\bcernet\b/i, '中国教育和科研计算机网'],
+	[/\b(?:chinanetcenter|wangsu)\b/i, '网宿科技'],
+	[/\b21vianet\b/i, '世纪互联'],
+	[/\bgds\b.*data service|\bglobal data solutions\b/i, '万国数据'],
+	[/\bzenlayer\b/i, '禅层科技'],
 	[/\bmicrosoft\b/i, '微软'],
 	[/\bamazon[.-](?:com|aes|02)\b|amazon web services/i, '亚马逊 AWS'],
 	[/\bgoogle[- ]cloud\b/i, '谷歌云'],
 	[/\bgoogle\b/i, '谷歌'],
-	[/\bapple (?:inc|computer)\b/i, '苹果']
+	[/\bapple (?:inc|computer)\b/i, '苹果'],
+	[/\boracle\b/i, '甲骨文'],
+	[/\bibm\b|\binternational business machines\b/i, '国际商业机器公司（IBM）'],
+	[/\bmeta platforms\b|\bfacebook\b/i, '脸书（Meta）'],
+	[/\bnetflix\b/i, '奈飞'],
+	[/\bcomcast\b/i, '康卡斯特'],
+	[/\bverizon\b/i, '威瑞森'],
+	[/\bat&t\b/i, '美国电话电报公司（AT&T）'],
+	[/\bcharter communications\b/i, '宪章通信'],
+	[/\bcenturylink\b/i, '世纪链路通信'],
+	[/\blumen technologies\b/i, '流明科技'],
+	[/\bdeutsche telekom\b/i, '德国电信'],
+	[/\borange (?:s\.?a\.?|espagne|polska|romania|business)\b/i, '奥兰治电信'],
+	[/\bbritish (?:telecommunications|telecom)\b/i, '英国电信'],
+	[/\bvodafone\b/i, '沃达丰'],
+	[/\btelia\b/i, '特利亚电信'],
+	[/\btelenor\b/i, '挪威电信'],
+	[/\brostelecom\b/i, '俄罗斯电信'],
+	[/\btelefonica\b|\btelefónica\b/i, '西班牙电信'],
+	[/\bkorea telecom\b|\bkornet\b/i, '韩国电信'],
+	[/\bsk broadband\b/i, 'SK 宽带'],
+	[/\bntt\b/i, '日本电信电话（NTT）'],
+	[/\bsoftbank\b/i, '软银'],
+	[/\bsingtel\b|\bsingapore telecommunications\b/i, '新加坡电信'],
+	[/\bstarhub\b/i, '星和电信'],
+	[/\btelstra\b/i, '澳大利亚电信'],
+	[/\b(?:hkt|pccw)\b/i, '香港电讯'],
+	[/\bhgc global communications\b/i, '和记环球电讯'],
+	[/\bhong kong broadband network\b|\bhkbn\b/i, '香港宽频'],
+	[/\bhinet\b|\bchunghwa telecom\b/i, '中华电信'],
+	[/\bequinix\b/i, '易昆尼克斯']
 ];
 const regionOverrides = {
 	CN: '中国', US: '美国', HK: '中国香港', MO: '中国澳门', TW: '中国台湾',
@@ -44,13 +82,38 @@ function controls(onUpdated) {
 	let current = null;
 	let busy = false;
 	const message = E('small', { class: 'xbox-muted xbox-asn-status', role: 'status' });
+	const bar = E('progress', { class: 'xbox-asn-progress', max: 100, hidden: true, 'aria-label': '归属库更新进度' });
 	const button = E('button', { type: 'button', class: 'xbox-button', click: () => run(update) }, ['下载归属库']);
+
+	function showProgress(progress) {
+		const { stage, done = 0, total, rows = 0 } = progress || {};
+		const percent = total > 0 ? Math.min(100, Math.floor(done / total * 100)) : null;
+		bar.hidden = false;
+		if (percent === null || stage === 'finalize')
+			bar.removeAttribute('value');
+		else
+			bar.value = percent;
+		if (stage === 'download') {
+			const mib = bytes => (bytes / 1048576).toFixed(1);
+			message.textContent = '下载归属库 · ' + mib(done) +
+				(percent === null ? ' MiB' : ' / ' + mib(total) + ' MiB · ' + percent + '%');
+		} else if (stage === 'index') {
+			message.textContent = '建立索引 · 已处理 ' + rows.toLocaleString('zh-CN') + ' 条' +
+				(percent === null ? '' : ' · 已读取 ' + percent + '%');
+		} else if (stage === 'finalize') {
+			message.textContent = '写入本地索引 · 已处理 ' + rows.toLocaleString('zh-CN') + ' 条';
+		} else {
+			message.textContent = '正在连接归属库下载源…';
+		}
+	}
 
 	async function run(operation) {
 		if (busy)
 			return;
 		busy = true;
 		button.disabled = true;
+		if (operation === update)
+			showProgress();
 		try {
 			const result = await operation();
 			if (typeof result?.loading !== 'boolean')
@@ -58,19 +121,24 @@ function controls(onUpdated) {
 			const previous = current;
 			current = result;
 			button.textContent = result.loading ? '更新中…' : result.updated ? '更新归属库' : '下载归属库';
+			bar.hidden = !result.loading;
 			if (result.loading)
-				message.textContent = '正在下载并建立本地归属索引…';
+				showProgress(result.progress);
 			else if (result.error)
 				message.textContent = result.error;
 			else if (result.updated)
 				message.textContent = result.has_country
-					? '本地归属库 · 下载于 ' + new Date(result.updated * 1000).toLocaleString()
+					? (previous?.loading ? '归属库已更新 · ' : '本地归属库 · 下载于 ') +
+						new Date(result.updated * 1000).toLocaleString()
 					: '点「更新归属库」以显示 ASN 的国家或地区。';
 			else
-				message.textContent = '下载归属库后可查看 IP 的运营组织、ASN 和国家或地区。';
-			if (result.updated && (result.updated !== previous?.updated || result.has_country !== previous?.has_country))
+				message.textContent = '下载归属库后可查看域名和 IP 的运营组织、ASN 和国家或地区。';
+			if (!result.loading && result.updated &&
+				(result.updated !== previous?.updated || result.has_country !== previous?.has_country ||
+					(previous?.loading && !result.error)))
 				onUpdated();
 		} catch (error) {
+			bar.hidden = !current?.loading;
 			message.textContent = error.message;
 		} finally {
 			busy = false;
@@ -80,7 +148,7 @@ function controls(onUpdated) {
 
 	const refresh = () => !current || current.loading ? run(status) : null;
 	refresh();
-	return { button, message, refresh };
+	return { button, message, bar, refresh };
 }
 
 function ownerLabels(owner) {
@@ -97,21 +165,22 @@ function ownerLabels(owner) {
 }
 
 function ownerBadge(entry) {
-	const owner = entry.owner;
-	if (!owner || !Number.isInteger(owner.asn))
-		return '';
-	const { fullName, organization, asn } = ownerLabels(owner);
-	return E('small', { class: 'xbox-asn-owner', title: [fullName, asn].filter(Boolean).join(' · ') }, [
-		[organization, asn].filter(Boolean).join(' · ')
-	]);
+	const owners = (entry.owners || [entry.owner]).filter(owner => Number.isInteger(owner?.asn));
+	return owners.length ? E('span', { class: 'xbox-asn-owners' }, owners.map(owner => {
+		const { fullName, organization, asn } = ownerLabels(owner);
+		return E('small', { class: 'xbox-asn-owner', title: [fullName, asn, owner.source].filter(Boolean).join(' · ') }, [
+			[organization, asn].filter(Boolean).join(' · ')
+		]);
+	})) : '';
 }
 
 function matchesOwner(entry, query) {
-	const owner = entry.owner;
-	if (!owner)
-		return false;
-	const { fullName, organization, asn } = ownerLabels(owner);
-	return [organization, fullName, asn, owner.country || ''].some(value => value.toLowerCase().includes(query));
+	return (entry.owners || [entry.owner]).some(owner => {
+		if (!owner)
+			return false;
+		const { fullName, organization, asn } = ownerLabels(owner);
+		return [organization, fullName, asn, owner.country || ''].some(value => value.toLowerCase().includes(query));
+	});
 }
 
 return baseclass.extend({ controls, ownerBadge, matchesOwner });

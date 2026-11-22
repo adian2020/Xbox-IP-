@@ -196,7 +196,7 @@ return view.extend({
 			E('div', { class: 'xbox-actions xbox-field-wide' }, [this.startButton, this.stopButton])
 		]);
 		const root = E('div', { id: 'xbox-capture' }, [
-			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.5.1' }),
+			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.6.0' }),
 			E('header', { class: 'xbox-heading' }, [
 				E('h2', {}, ['Xbox 网络录制']),
 				E('p', { class: 'xbox-muted' }, ['先开始录制，再打开游戏。'])
@@ -213,7 +213,8 @@ return view.extend({
 					]),
 					this.captureText,
 					E('div', { class: 'xbox-live-actions' }, [this.liveMonitor.button, ownership.button]),
-					ownership.message
+					ownership.message,
+					ownership.bar
 				])
 			]),
 			this.liveMonitor.panel,
@@ -236,7 +237,7 @@ return view.extend({
 		]);
 
 		poll.add(() => this.refresh(), 2);
-		poll.add(ownership.refresh, 2);
+		poll.add(ownership.refresh, 1);
 		this.refresh();
 		return root;
 	},
@@ -520,10 +521,11 @@ return view.extend({
 				const result = await this.readSession(session.id, request);
 				if (!result || request !== this.request)
 					return;
-				const owners = new Map(result.entries.filter(entry => entry.owner).map(entry => [entry.value, entry.owner]));
+				const refreshed = new Map(result.entries.map(entry => [entry.value, entry]));
 				for (const entry of entries) {
-					if (!entry.sources)
-						entry.owner = owners.get(entry.value);
+					const latest = refreshed.get(entry.value);
+					entry.owner = latest?.owner;
+					entry.owners = latest?.owners;
 				}
 				resetPage();
 			} catch (error) {
@@ -551,6 +553,8 @@ return view.extend({
 		const deleteButton = button('删除这条录制', () => this.confirmRemove([session.id]), 'xbox-danger');
 
 		const notes = [];
+		if (session.domain_count > 0 && !session.domain_asn)
+			notes.push('此录制保存于域名归属功能加入前。新录制可显示已关联的域名归属。');
 		if (session.error)
 			notes.push(session.error);
 		if (session.storage_warning)

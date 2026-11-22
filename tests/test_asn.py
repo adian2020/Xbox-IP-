@@ -61,7 +61,7 @@ class OwnershipTests(unittest.TestCase):
             with store.reader() as index:
                 self.assertEqual(index.lookup("1.0.0.0"), {"asn": 13335, "organization": "Cloudflare"})
                 self.assertEqual(index.lookup("2606:4700::1100")["asn"], 13335)
-            with patch("asn.download_feed", side_effect=lambda path: path.write_bytes(gzip.compress(FEED))):
+            with patch("asn.download_feed", side_effect=lambda path, _: path.write_bytes(gzip.compress(FEED))):
                 store.refresh()
             self.assertTrue(store.status()["has_country"])
             with store.reader() as index:
@@ -70,11 +70,11 @@ class OwnershipTests(unittest.TestCase):
     def test_failed_refresh_keeps_the_previous_database(self):
         with tempfile.TemporaryDirectory() as temp:
             store = ASNStore(Path(temp))
-            with patch("asn.download_feed", side_effect=lambda path: path.write_bytes(gzip.compress(FEED))):
+            with patch("asn.download_feed", side_effect=lambda path, _: path.write_bytes(gzip.compress(FEED))):
                 store.refresh()
             published = store.path.read_bytes()
             self.assertIsNone(store.status()["error"])
-            with patch("asn.download_feed", side_effect=lambda path: path.write_bytes(gzip.compress(b"bad"))):
+            with patch("asn.download_feed", side_effect=lambda path, _: path.write_bytes(gzip.compress(b"bad"))):
                 store.refresh()
             self.assertEqual(store.path.read_bytes(), published)
             self.assertIn("格式无效", store.status()["error"])
@@ -90,19 +90,46 @@ class OwnershipTests(unittest.TestCase):
             device = Device("192.168.1.50")
             session = Session("Game", "br-lan", device, device, 10, None)
             session.observe(ipaddress.ip_address("1.0.0.8").packed, {"auth.example.com"}, "TLS SNI", ("TCP", 443))
+            session.observe_answers({
+                ("auth.example.com", ipaddress.ip_address("1.0.0.8").packed),
+                ("auth.example.com", ipaddress.ip_address("1.0.0.2").packed),
+                ("auth.example.com", ipaddress.ip_address("198.18.0.1").packed),
+            })
             controller.active = session
             id = session.summary["id"]
             live = controller.dispatch("live", {"id": id})["entries"]
             self.assertNotIn("owner", live[0])
+            self.assertEqual([(owner["asn"], owner["source"]) for owner in live[0]["owners"]],
+                             [(8075, "TLS SNI"), (13335, "DNS 回应")])
             self.assertEqual(live[1]["owner"]["asn"], 8075)
             self.assertEqual(live[1]["owner"]["country"], "US")
             controller.save(session.result())
             result = controller.dispatch("get", {"id": id})
+            self.assertEqual(result["entries"][0]["owners"], live[0]["owners"])
             self.assertEqual(result["entries"][1]["owner"], live[1]["owner"])
             self.assertNotIn('"owner"', dumps(controller.get(id)))
+            self.assertNotIn('"owners"', dumps(controller.get(id)))
             exported = controller.dispatch("export", {"id": id})
             self.assertIn("IP-CIDR,1.0.0.8/32,no-resolve", exported["yaml"])
             self.assertNotIn("Microsoft", exported["yaml"])
+            self.assertNotIn("IP-CIDR,1.0.0.2", exported["yaml"])
+
+    def test_progress_reports_download_and_index_before_completion(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = ASNStore(Path(temp))
+            feed = gzip.compress(FEED)
+
+            def download(path, report):
+                report(20, len(feed))
+                path.write_bytes(feed)
+                report(len(feed), len(feed))
+
+            with patch("asn.download_feed", side_effect=download), patch.object(store, "report", wraps=store.report) as report:
+                store.refresh()
+            self.assertEqual([call.args[0] for call in report.call_args_list],
+                             ["download", "download", "index", "finalize"])
+            self.assertIsNone(store.status()["progress"])
+            self.assertIsNone(store.status()["error"])
 
     def test_history_pagination_counts_ownership_metadata(self):
         with tempfile.TemporaryDirectory() as temp:

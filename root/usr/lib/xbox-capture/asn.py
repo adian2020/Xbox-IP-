@@ -33,13 +33,18 @@ UNKNOWN_COUNTRY = b"\0\0"
 UNROUTED = (0, UNKNOWN_COUNTRY)
 
 
-def download_feed(destination):
-    request = Request(SOURCE_URL, headers={"User-Agent": "Xbox-Capture/1.5.1"})
+def download_feed(destination, report):
+    request = Request(SOURCE_URL, headers={"User-Agent": "Xbox-Capture/1.6.0"})
     deadline = time.monotonic() + 150
     with urlopen(request, timeout=20) as response, destination.open("wb") as file:
         if not response.geturl().startswith("https://"):
             raise ValueError("归属库的下载地址必须使用 HTTPS。")
+        length = response.headers.get("Content-Length", "")
+        size = int(length) if length.isascii() and length.isdecimal() and len(length) <= 10 else None
+        if size and size > MAX_DOWNLOAD:
+            raise ValueError("归属库压缩文件超过大小限制。")
         total = 0
+        report(total, size)
         while True:
             chunk = response.read(64 * 1024)
             if not chunk:
@@ -50,9 +55,12 @@ def download_feed(destination):
             if time.monotonic() >= deadline:
                 raise ValueError("下载归属库超时。")
             file.write(chunk)
+            report(total, size)
+        if size and total != size:
+            raise ValueError("归属库下载不完整。")
 
 
-def build_index(lines, file):
+def build_index(lines, file, report=None):
     """Use one ordered boundary per contiguous origin and a shared ASN name table."""
     counts = {4: 0, 6: 0}
     names = {}
@@ -67,9 +75,12 @@ def build_index(lines, file):
         if file.tell() > MAX_INDEX_SIZE:
             raise ValueError("归属索引超过大小限制。")
 
+    line_number = 0
     for line_number, line in enumerate(lines, 1):
         if len(line) > MAX_LINE or line_number > MAX_ROWS:
             raise ValueError("归属数据超过大小限制。")
+        if report is not None and line_number % 2048 == 0:
+            report(line_number)
         fields = line.rstrip(b"\r\n").split(b"\t", 4)
         try:
             first, last, number, country, description = fields
@@ -109,6 +120,8 @@ def build_index(lines, file):
         boundary(last_end + 1, UNROUTED)
     if not all(counts.values()):
         raise ValueError("归属库缺少 IPv4 或 IPv6 数据。")
+    if report is not None:
+        report(line_number, True)
 
     name_offset = 0
     ordered = sorted(names.items())
@@ -174,11 +187,23 @@ class ASNIndex:
             result["country"] = country.decode("ascii", errors="ignore") if country != UNKNOWN_COUNTRY else None
         return result
 
-    def annotate(self, entry):
+    def annotate(self, entry, bindings=()):
         if "sources" not in entry:
             owner = self.lookup(entry["value"])
             if owner:
                 entry["owner"] = owner
+            return
+
+        owners = {}
+        for address, source in bindings:
+            owner = self.lookup(address)
+            if owner:
+                key = owner["asn"], owner.get("country")
+                owners.setdefault(key, {**owner, "source": source})
+                if len(owners) == 3:
+                    break
+        if owners:
+            entry["owners"] = list(owners.values())
 
 
 class ASNStore:
@@ -189,6 +214,7 @@ class ASNStore:
         self.lock = threading.Lock()
         self.loading = False
         self.error = None
+        self.progress = None
 
     @contextmanager
     def reader(self):
@@ -221,27 +247,41 @@ class ASNStore:
                         updated = int(os.fstat(file.fileno()).st_mtime)
             except OSError:
                 pass
-            return {"loading": self.loading, "updated": updated, "has_country": magic == MAGIC, "error": self.error}
+            return {"loading": self.loading, "updated": updated, "has_country": magic == MAGIC,
+                    "error": self.error, "progress": self.progress}
+
+    def report(self, stage, done=0, total=None, rows=0):
+        with self.lock:
+            self.progress = {"stage": stage, "done": done, "total": total, "rows": rows}
 
     def update(self):
         with self.lock:
             if not self.loading:
                 self.loading = True
                 self.error = None
+                self.progress = {"stage": "connect"}
                 worker = threading.Thread(target=self.refresh, daemon=True, name="asn-update")
                 try:
                     worker.start()
                 except RuntimeError:
                     self.loading = False
                     self.error = "无法启动归属库更新。"
+                    self.progress = None
         return self.status()
 
     def refresh(self):
         error = "无法更新归属库。"
         try:
-            download_feed(self.download_path)
-            with gzip.open(self.download_path, "rb") as rows, self.build_path.open("wb") as file:
-                build_index(iter(lambda: rows.readline(MAX_LINE + 1), b""), file)
+            download_feed(self.download_path, lambda done, total: self.report("download", done, total))
+            with self.download_path.open("rb") as source, gzip.GzipFile(fileobj=source) as rows, \
+                    self.build_path.open("wb") as file:
+                size = os.fstat(source.fileno()).st_size
+                self.report("index", 0, size)
+
+                def index_progress(count, finishing=False):
+                    self.report("finalize" if finishing else "index", source.tell(), size, count)
+
+                build_index(iter(lambda: rows.readline(MAX_LINE + 1), b""), file, index_progress)
             os.replace(self.build_path, self.path)
             error = None
         except ValueError as exc:
@@ -257,3 +297,4 @@ class ASNStore:
             with self.lock:
                 self.loading = False
                 self.error = error
+                self.progress = None

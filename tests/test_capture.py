@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "root/usr/lib/xbox-
 from main import LIVE_ROWS, Controller, Session, export_rules, result_entries
 from devices import device_records, dnsmasq_leases, interface_scopes, neighbour_rows
 from neighbours import capture_device, macs_from_arp, macs_from_neighbours
-from packets import LINK_ETHERNET, LINK_SLL2, Device, PacketDecoder, read_pcap
+from packets import LINK_ETHERNET, LINK_SLL2, Device, PacketDecoder, dns_answers, read_pcap
 
 MAC = "00:11:22:33:44:55"
 ADDRESS = "192.168.42.236"
@@ -134,6 +134,53 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(session.summary["packet_count"], 2)
         self.assertEqual(session.summary["fakeip_count"], 1)
         self.assertEqual(session.summary["ip_count"], 0)
+
+    def test_dns_reply_links_only_answers_for_the_selected_device(self):
+        device = Device(ADDRESS)
+        session = Session("Game", "br-lan", device, Device(MAC), 10, None)
+        resolver = packed("192.168.42.1")
+        session.observe(resolver, {"game.example"}, "DNS", ("UDP", 53))
+        alias = b"\x03cdn\x07example\x00"
+        v4, v6 = packed("8.8.4.4"), packed("2606:4700::1111")
+
+        def answer(name, kind, data):
+            return name + struct.pack(">HHIH", kind, 1, 60, len(data)) + data
+
+        dns = (struct.pack(">6H", 12, 0x8180, 1, 4, 0, 0)
+               + b"\x04game\x07example\x00\x00\x01\x00\x01"
+               + answer(b"\xc0\x0c", 5, alias)
+               + answer(alias, 1, v4)
+               + answer(alias, 28, v6)
+               + answer(b"\x05other\x07example\x00", 1, packed("9.9.9.9")))
+        expected = {("game.example", v4), ("game.example", v6)}
+        self.assertEqual(dns_answers(dns), expected)
+        self.assertFalse(dns_answers(dns[:-1]))
+        udp = struct.pack(">HHHH", 53, 54400, len(dns) + 8, 0) + dns
+        ip = struct.pack(">BBHHHBBH", 0x45, 0, 20 + len(udp), 0, 0, 64, 17, 0)
+        ethernet = bytes.fromhex("0011223344550200000000010800")
+        frame = ethernet + ip + resolver + packed(ADDRESS) + udp
+        decoder = session.decoder
+        self.assertIsNone(decoder.inspect(LINK_ETHERNET, frame)[0])
+        self.assertEqual(decoder.answers, expected)
+        session.observe_answers(decoder.answers)
+        self.assertEqual(session.summary["packet_count"], 1)
+        self.assertEqual(session.summary["ip_count"], 0)
+        self.assertEqual(session.result()["domain_ips"], {
+            "game.example": [("8.8.4.4", "DNS 回应"), ("2606:4700::1111", "DNS 回应")]
+        })
+        decoder.inspect(LINK_ETHERNET, bytes.fromhex("001122334499") + frame[6:])
+        self.assertFalse(decoder.answers)
+
+        def tcp_reply(sequence, payload):
+            tcp = struct.pack(">HHIIBBHHH", 53, 54400, sequence, 0, 0x50, 0x18, 2048, 0, 0) + payload
+            header = struct.pack(">BBHHHBBH", 0x45, 0, 20 + len(tcp), 0, 0, 64, 6, 0)
+            return ethernet + header + resolver + packed(ADDRESS) + tcp
+
+        wire = struct.pack(">H", len(dns)) + dns
+        decoder.inspect(LINK_ETHERNET, tcp_reply(100, wire[:15]))
+        self.assertFalse(decoder.answers)
+        decoder.inspect(LINK_ETHERNET, tcp_reply(115, wire[15:]))
+        self.assertEqual(decoder.answers, expected)
 
     def test_ports_are_kept_for_ip_and_tls_domain(self):
         device = Device(ADDRESS)

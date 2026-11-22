@@ -1,4 +1,4 @@
-"""Extract destination addresses, DNS questions and TLS ClientHello names."""
+"""Extract destination addresses, DNS questions and answers, and TLS ClientHello names."""
 
 from collections import OrderedDict
 from functools import lru_cache
@@ -62,18 +62,25 @@ class Device:
         self.filter = " or ".join("src host " + str(addr) for addr in addresses)
 
 
-def capture_filter(device, cooked=False, vlan=False):
+def capture_filter(device, cooked=False, vlan=False, reply_addresses=()):
+    outgoing = device.filter
     if cooked and device.mac:
         # Linux cooked v2 records the sender's link-layer address on ingress.
         prefix = int.from_bytes(device.mac[:4], "big")
         suffix = int.from_bytes(device.mac[4:], "big")
-        return (
+        outgoing = (
             "link[8:2] = 1 and link[10] != 4 and link[11] = 6"
             f" and link[12:4] = 0x{prefix:08x} and link[16:2] = 0x{suffix:04x}"
         )
-    if vlan and not device.mac:
-        return f"({device.filter}) or (vlan and ({device.filter}))"
-    return device.filter
+    if device.mac and not cooked:
+        dns = "(src port 53 or (vlan and src port 53))" if vlan else "src port 53"
+        return f"({outgoing}) or (ether dst {device.label} and {dns})"
+
+    addresses = reply_addresses if device.mac else device.addresses
+    if addresses:
+        destinations = " or ".join("dst host " + str(ipaddress.ip_address(ip)) for ip in sorted(addresses))
+        outgoing = f"({outgoing}) or (src port 53 and ({destinations}))"
+    return f"({outgoing}) or (vlan and ({outgoing}))" if vlan else outgoing
 
 
 def read_pcap(source):
@@ -106,26 +113,35 @@ def read_pcap(source):
         yield link, frame
 
 
-def network_packet(link, frame, device):
+def network_packet(link, frame, device, reply_addresses):
+    outgoing = incoming = True
+    incoming_addresses = device.addresses
     if link == LINK_ETHERNET:
-        if len(frame) < 14 or (device.mac and frame[6:12] != device.mac):
+        if len(frame) < 14:
             return
+        if device.mac:
+            outgoing = frame[6:12] == device.mac
+            incoming = frame[:6] == device.mac
         ethertype, offset = number(frame, 12), 14
     elif link == LINK_SLL:
-        if len(frame) < 16 or (device.mac and (
-            number(frame, 0) == 4 or number(frame, 2) != 1 or
-            number(frame, 4) != 6 or frame[6:12] != device.mac
-        )):
+        if len(frame) < 16:
             return
+        if device.mac:
+            outgoing = (number(frame, 0) != 4 and number(frame, 2) == 1 and
+                        number(frame, 4) == 6 and frame[6:12] == device.mac)
+            incoming, incoming_addresses = bool(reply_addresses), reply_addresses
         ethertype, offset = number(frame, 14), 16
     elif link == LINK_SLL2:
-        if len(frame) < 20 or (device.mac and (
-            number(frame, 8) != 1 or frame[10] == 4 or
-            frame[11] != 6 or frame[12:18] != device.mac
-        )):
+        if len(frame) < 20:
             return
+        if device.mac:
+            outgoing = (number(frame, 8) == 1 and frame[10] != 4 and
+                        frame[11] == 6 and frame[12:18] == device.mac)
+            incoming, incoming_addresses = bool(reply_addresses), reply_addresses
         ethertype, offset = number(frame, 0), 20
     else:
+        return
+    if not (outgoing or incoming):
         return
 
     for _ in range(4):
@@ -143,20 +159,22 @@ def network_packet(link, frame, device):
         if start < 20 or start > len(data) or start > end:
             return
         source, dest = bytes(data[12:16]), bytes(data[16:20])
-        if device.addresses and source not in device.addresses:
+        sent = outgoing and (not device.addresses or source in device.addresses)
+        if not sent and not (incoming and (not incoming_addresses or dest in incoming_addresses)):
             return
         fragmented = number(data, 6) & 0x3fff
-        return source, dest, data[9], data[start:end] if not fragmented else data[:0]
+        return source, dest, data[9], data[start:end] if not fragmented else data[:0], sent
 
     if ethertype == 0x86dd and len(data) >= 40 and data[0] >> 4 == 6:
         source, dest = bytes(data[8:24]), bytes(data[24:40])
-        if device.addresses and source not in device.addresses:
+        sent = outgoing and (not device.addresses or source in device.addresses)
+        if not sent and not (incoming and (not incoming_addresses or dest in incoming_addresses)):
             return
         protocol, start = data[6], 40
         data = data[:40 + number(data, 4)]
         for _ in range(8):
             if protocol not in (0, 43, 44, 51, 60, 135):
-                return source, dest, protocol, data[start:]
+                return source, dest, protocol, data[start:], sent
             if start + 2 > len(data):
                 break
             next_protocol, length = data[start:start + 2]
@@ -171,7 +189,7 @@ def network_packet(link, frame, device):
             if start > len(data):
                 break
             protocol = next_protocol
-        return source, dest, 0, data[:0]
+        return source, dest, 0, data[:0], sent
 
 
 def domain_name(value):
@@ -230,6 +248,56 @@ def dns_questions(data):
     except ValueError:
         return set()
     return domains
+
+
+def dns_answers(data):
+    """Return only A/AAAA answers reachable from a question via its CNAME chain."""
+    if len(data) < 12 or data[2] & 0xfa != 0x80 or data[3] & 0x0f:
+        return set()
+    questions, records = number(data, 4), number(data, 6)
+    if not 1 <= questions <= 32 or not 1 <= records <= 128:
+        return set()
+    names, addresses, aliases = set(), {}, {}
+    try:
+        offset = 12
+        for _ in range(questions):
+            name, offset = dns_name(data, offset)
+            if offset + 4 > len(data):
+                return set()
+            if name and number(data, offset + 2) == 1:
+                names.add(name)
+            offset += 4
+        for _ in range(records):
+            name, offset = dns_name(data, offset)
+            if offset + 10 > len(data):
+                return set()
+            kind, dns_class, length = number(data, offset), number(data, offset + 2), number(data, offset + 8)
+            offset += 10
+            end = offset + length
+            if end > len(data):
+                return set()
+            if name and dns_class == 1:
+                if (kind, length) in ((1, 4), (28, 16)):
+                    addresses.setdefault(name, set()).add(bytes(data[offset:end]))
+                elif kind == 5:
+                    target, following = dns_name(data, offset)
+                    if target and following == end:
+                        aliases[name] = target
+            offset = end
+    except ValueError:
+        return set()
+
+    answers = set()
+    for name in names:
+        target = name
+        visited = set()
+        for _ in range(16):
+            answers.update((name, ip) for ip in addresses.get(target, ()))
+            visited.add(target)
+            target = aliases.get(target)
+            if target is None or target in visited:
+                break
+    return answers
 
 
 def client_hello_name(hello):
@@ -322,7 +390,7 @@ class Stream:
                     return
                 if len(self.buffer) < 2 + length:
                     return
-                domains.update(dns_questions(self.buffer[2:2 + length]))
+                domains.update(self.dns(self.buffer[2:2 + length]))
                 del self.buffer[:2 + length]
                 continue
 
@@ -356,15 +424,31 @@ class Stream:
 
 
 class PacketDecoder:
-    def __init__(self, device):
+    def __init__(self, device, reply_addresses=()):
         self.device = device
+        self.reply_addresses = reply_addresses
         self.streams = OrderedDict()
+        self.answers = set()
 
     def inspect(self, link, frame):
-        packet = network_packet(link, frame, self.device)
+        self.answers = set()
+        packet = network_packet(link, frame, self.device, self.reply_addresses)
         if packet is None:
             return None, set(), None, None
-        source, dest, protocol, data = packet
+        source, dest, protocol, data, outgoing = packet
+        if not outgoing:
+            if protocol == 17 and len(data) >= 8 and number(data, 0) == 53:
+                length = number(data, 4)
+                if 8 <= length <= len(data):
+                    self.answers = dns_answers(data[8:length])
+            elif protocol == 6 and len(data) >= 20 and number(data, 0) == 53:
+                offset = (data[12] >> 4) * 4
+                if 20 <= offset <= len(data):
+                    self.answers = self.tcp(
+                        (source, dest, 53, number(data, 2)), number(data, 4, 4),
+                        data[13], data[offset:], dns_answers,
+                    )
+            return None, set(), None, None
         if protocol == 17 and len(data) >= 8:
             port = number(data, 2)
             udp_length = number(data, 4)
@@ -379,12 +463,12 @@ class PacketDecoder:
                 port = number(data, 2)
                 domains = self.tcp(
                     (source, dest, number(data, 0), port), number(data, 4, 4),
-                    data[13], data[offset:],
+                    data[13], data[offset:], dns_questions if port == 53 else None,
                 )
                 return dest, domains, "DNS" if port == 53 else "TLS SNI", ("TCP", port) if port else None
         return dest, set(), None, None
 
-    def tcp(self, key, sequence, flags, payload):
+    def tcp(self, key, sequence, flags, payload, dns):
         if not payload and not flags & 0x07:
             return set()
 
@@ -399,9 +483,9 @@ class PacketDecoder:
         if flags & 0x02:
             sequence = (sequence + 1) & 0xffffffff
             if stream is None or sequence != stream.initial:
-                stream = Stream(sequence, key[3] == 53, now)
-        elif stream is None and payload and (key[3] == 53 or payload[0] == 22):
-            stream = Stream(sequence, key[3] == 53, now)
+                stream = Stream(sequence, dns, now)
+        elif stream is None and payload and (dns is not None or payload[0] == 22):
+            stream = Stream(sequence, dns, now)
         if stream is None:
             return set()
 

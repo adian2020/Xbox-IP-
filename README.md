@@ -1,23 +1,23 @@
 # Xbox 网络录制
 
-OpenWrt 的 LuCI 插件。按 Xbox 的 MAC 地址或局域网 IP 开始一次录制，收集明文 DNS 查询、TCP TLS 握手公开的 SNI 和传出流量的公网 IPv4 / IPv6 目的地址。录制结束后可勾选条目，导出 Clash / Mihomo YAML 或分别生成域名和 IP MRS。
+OpenWrt 的 LuCI 插件。按 Xbox 的 MAC 地址或局域网 IP 开始一次录制，收集明文 DNS 查询、TCP TLS 握手公开的 SNI 和传出流量的公网 IPv4 / IPv6 目的地址。DNS 回应和 SNI 连接可用于关联域名的网络归属。录制结束后可勾选条目，导出 Clash / Mihomo YAML 或分别生成域名和 IP MRS。
 
 ## 安装
 
-将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.5.1 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.5.1)
+将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.6.0 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.6.0)
 
 **使用 opkg 的 OpenWrt（例如 23.05、24.10）**
 
 ```sh
 opkg update
-opkg install /tmp/luci-app-xbox-capture_1.5.1-1_all.ipk
+opkg install /tmp/luci-app-xbox-capture_1.6.0-1_all.ipk
 ```
 
 **使用 apk 的 OpenWrt（例如 25.12）**
 
 ```sh
 apk update
-apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.5.1-r1.apk
+apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.6.0-r1.apk
 ```
 
 这里的 `--allow-untrusted` 用于安装这一个本地未签名的 APK。安装完成后重新打开 LuCI，进入 **服务 → Xbox 网络录制**。也可以用 `ubus call xbox-capture status '{}'` 确认插件已注册。
@@ -37,9 +37,11 @@ apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.5.1-r1.apk
 
 在 **实时状态** 点 **打开抓取面板**。录制期间每两秒更新已抓到的域名、公网 IP、端口和最近新增信息的时间。可以按类型筛选、搜索或分页。实时列表遵循当前录制模式，录制结束后可从面板进入完整录制。
 
-### 公网 IP 归属
+### 域名与公网 IP 归属
 
-首次使用时点 **下载归属库**。从 1.5.0 升级后，已有归属库可点 **更新归属库** 以补充国家或地区。实时面板和录制详情会在公网 IPv4／IPv6 下显示匹配的归属，例如「中国移动（湖南） · AS56047(中国)」。常见组织显示中文名，其余沿用数据源名称。录制详情支持用中文名、英文原名、ASN 或国家和地区筛选。
+首次使用时点 **下载归属库**。更新时可查看下载量、索引读取进度和已处理条数。实时面板和录制详情会显示匹配的运营组织、ASN 和地区。中文名包含阿卡迈等常见网络组织，其余沿用数据源名称。录制详情支持用中文名、英文原名、ASN 或国家和地区筛选。
+
+1.6.0 起，新录制会用发往 Xbox 的明文 DNS 回应（A、AAAA 和 CNAME）以及 TLS SNI 连接关联域名和公网 IP。同一域名最多显示三个不同归属。只看到域名、私网地址或 Fake IP 的条目可能没有归属标签。使用 `any` 接口时，DNS 回应关联需要已知的 Xbox 局域网 IP。旧录制继续显示 IP 归属。域名关联信息用于界面显示，DNS 回应中的地址不会额外生成 IP 规则。
 
 归属查询在路由器上完成。IPtoASN 提供约 11 MB 的公开压缩数据，索引存入路由器临时存储。重启后可重新下载。国家或地区取自归属库，实际机房位置可能不同。ASN 标明该 IP 所在的网络，判断流量用途仍可结合域名和待机基线。[IPtoASN 数据来源和许可](https://iptoasn.com/)
 

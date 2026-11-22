@@ -757,6 +757,18 @@
 	overflow-wrap: anywhere;
 }
 
+#xbox-capture .xbox-asn-progress {
+	width: 100%;
+	height: 10px;
+	margin-top: 6px;
+	accent-color: var(--xbox-accent);
+}
+
+#xbox-capture .xbox-asn-owners {
+	display: grid;
+	gap: 2px;
+}
+
 #xbox-capture .xbox-asn-owner {
 	color: var(--xbox-accent);
 	overflow-wrap: anywhere;

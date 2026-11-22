@@ -45,6 +45,7 @@ METHODS = {
                        "directory": "", "game": "", "domain_name": "", "ip_name": ""},
 }
 MAX_ENTRIES = 2000
+MAX_DOMAIN_IPS = 8
 MAX_TARGET_PORTS = 24
 MAX_SESSION_PORTS = 8192
 MAX_HISTORY = 20
@@ -141,7 +142,7 @@ class Session:
             "id": os.urandom(16).hex(), "name": name, "interface": interface, "device": device.label,
             "started": epoch(), "ended": None, "state": "recording", "minutes": minutes,
             "domain_count": 0, "ip_count": 0, "truncated": False, "kernel_drops": None,
-            "frame_count": 0, "packet_count": 0, "fakeip_count": 0,
+            "frame_count": 0, "packet_count": 0, "fakeip_count": 0, "domain_asn": True,
         }
         if selector.mac:
             self.summary["capture_mac"] = selector.label
@@ -152,9 +153,10 @@ class Session:
             self.summary["baseline"] = {"id": reference["id"], "name": reference["name"]}
             self.baseline_domains = {entry["value"] for entry in baseline["domains"]}
             self.baseline_addresses = {ipaddress.ip_address(value).packed for value in baseline["ips"]}
-        self.decoder = PacketDecoder(selector)
+        self.decoder = PacketDecoder(selector, reply_addresses=device.addresses)
         self.process = None
         self.domains = {}
+        self.domain_ips = {}
         self.addresses = set()
         self.address_ports = {}
         self.domain_ports = {}
@@ -179,6 +181,33 @@ class Session:
         key = (kind, value)
         self.recent[key] = epoch()
         self.recent.move_to_end(key)
+
+    def link_domain(self, domain, address, source):
+        if not is_public(address):
+            return False
+        bindings = self.domain_ips.setdefault(domain, {})
+        if address in bindings:
+            if source == "TLS SNI" and bindings[address] != source:
+                bindings[address] = source
+                return True
+            return False
+        if len(bindings) >= MAX_DOMAIN_IPS:
+            if source != "TLS SNI":
+                return False
+            replaced = next((value for value, origin in bindings.items() if origin == "DNS 回应"), None)
+            if replaced is None:
+                return False
+            del bindings[replaced]
+        bindings[address] = source
+        return True
+
+    def observe_answers(self, answers):
+        for domain, address in sorted(answers):
+            if domain in self.domains and self.link_domain(domain, address, "DNS 回应"):
+                self.touch("domain", domain)
+
+    def domain_bindings(self, domain):
+        return sorted(self.domain_ips.get(domain, {}).items(), key=lambda item: item[1] != "TLS SNI")
 
     def observe(self, dest, domains, origin, endpoint=None):
         self.summary["packet_count"] += 1
@@ -206,7 +235,8 @@ class Session:
             sources.add(origin)
             self.summary["domain_count"] = len(self.domains)
             new_port = origin == "TLS SNI" and endpoint and self.remember_port(self.domain_ports, domain, endpoint)
-            if new_source or new_port:
+            new_binding = origin == "TLS SNI" and self.link_domain(domain, dest, origin)
+            if new_source or new_port or new_binding:
                 self.touch("domain", domain)
 
     def entry(self, kind, value):
@@ -250,6 +280,10 @@ class Session:
                     for value in sorted(self.addresses, key=lambda value: (len(value), value))],
             "ip_ports": {str(ipaddress.ip_address(value)): sorted(ports)
                          for value, ports in self.address_ports.items()},
+            "domain_ips": {
+                domain: [(str(ipaddress.ip_address(address)), origin) for address, origin in self.domain_bindings(domain)]
+                for domain in self.domain_ips
+            },
         }
 
 
@@ -299,10 +333,12 @@ class Controller:
             if self.active is None or self.active.summary["id"] != id:
                 return {"id": None}
             result = self.active.live_page(kind, query.strip().lower(), offset)
+            bindings = {entry["value"]: self.active.domain_bindings(entry["value"])
+                        for entry in result["entries"] if "sources" in entry}
         with self.asn.reader() as index:
             if index is not None:
                 for entry in result["entries"]:
-                    index.annotate(entry)
+                    index.annotate(entry, bindings.get(entry["value"], ()))
         return result
 
     def start(self, name, interface, device, minutes, baseline_id=""):
@@ -354,7 +390,9 @@ class Controller:
             ]
             if cooked:
                 command += ["-y", "LINUX_SLL2"]
-            command += ["-w", "-", capture_filter(selector, cooked=cooked, vlan=vlan)]
+            command += ["-w", "-", capture_filter(
+                selector, cooked=cooked, vlan=vlan, reply_addresses=device.addresses,
+            )]
             error_log = tempfile.TemporaryFile(dir=self.directory)
             try:
                 session.process = subprocess.Popen(
@@ -400,6 +438,8 @@ class Controller:
                         session.summary["frame_count"] += 1
                         if observed[0] is not None:
                             session.observe(*observed)
+                        elif session.decoder.answers:
+                            session.observe_answers(session.decoder.answers)
         except (OSError, ValueError) as exc:
             error = str(exc)
             process.kill()
@@ -508,13 +548,15 @@ class Controller:
         if method == "get":
             with self.lock:
                 result = self.get(args.get("id"))
+            bindings = result.get("domain_ips", {})
             with self.asn.reader() as index:
                 def size(entry):
                     if index is not None:
-                        index.annotate(entry)
+                        index.annotate(entry, bindings.get(entry["value"], ()))
                     return len(dumps(entry).encode()) + 1
 
-                entries, next_offset = page(result_entries(result), args.get("offset", 0), size)
+                rows = [entry.copy() for entry in result_entries(result)]
+                entries, next_offset = page(rows, args.get("offset", 0), size)
             return {"summary": result["summary"], "entries": entries, "next": next_offset}
         if method == "export":
             with self.lock:
