@@ -3,12 +3,12 @@
     "description": "Xbox 网络录制与 Clash 导出",
     "read": {
       "ubus": {
-        "xbox-capture": ["status", "devices", "live", "sessions", "get", "export", "mrs_build", "mrs_status", "mrs_download"]
+        "xbox-capture": ["status", "devices", "live", "asn_status", "sessions", "get", "export", "mrs_build", "mrs_status", "mrs_download"]
       }
     },
     "write": {
       "ubus": {
-        "xbox-capture": ["start", "stop", "remove", "remove_many", "mrs_import", "github_login", "github_publish"]
+        "xbox-capture": ["start", "stop", "remove", "remove_many", "asn_update", "mrs_import", "github_login", "github_publish"]
       }
     }
   }

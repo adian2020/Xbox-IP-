@@ -5,6 +5,7 @@
 'require ui';
 'require xboxcapture.mrs as mrs';
 'require xboxcapture.monitor as monitor';
+'require xboxcapture.asn as asn';
 
 const object = 'xbox-capture';
 const status = rpc.declare({ object, method: 'status', raise: true });
@@ -108,6 +109,8 @@ return view.extend({
 		this.hasHistory = false;
 		this.detailId = null;
 		this.liveMonitor = monitor.captureMonitor(id => this.openSession(id, true));
+		this.refreshOwnership = null;
+		const ownership = asn.controls(() => this.refreshOwnership?.());
 
 		const name = E('input', {
 			id: 'xbox-game', type: 'text', maxlength: 64, required: true, placeholder: '例如 Forza Horizon 5'
@@ -193,7 +196,7 @@ return view.extend({
 			E('div', { class: 'xbox-actions xbox-field-wide' }, [this.startButton, this.stopButton])
 		]);
 		const root = E('div', { id: 'xbox-capture' }, [
-			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.4.0' }),
+			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.5.0' }),
 			E('header', { class: 'xbox-heading' }, [
 				E('h2', {}, ['Xbox 网络录制']),
 				E('p', { class: 'xbox-muted' }, ['先开始录制，再打开游戏。'])
@@ -209,7 +212,8 @@ return view.extend({
 						metric(this.ipValue, '公网 IP')
 					]),
 					this.captureText,
-					E('div', { class: 'xbox-live-actions' }, [this.liveMonitor.button])
+					E('div', { class: 'xbox-live-actions' }, [this.liveMonitor.button, ownership.button]),
+					ownership.message
 				])
 			]),
 			this.liveMonitor.panel,
@@ -232,6 +236,7 @@ return view.extend({
 		]);
 
 		poll.add(() => this.refresh(), 2);
+		poll.add(ownership.refresh, 2);
 		this.refresh();
 		return root;
 	},
@@ -403,25 +408,32 @@ return view.extend({
 		}
 	},
 
+	async readSession(id, request) {
+		let offset = 0;
+		const entries = [];
+		let response;
+		do {
+			response = checked(await get(id, offset));
+			if (request !== this.request)
+				return null;
+			entries.push(...response.entries);
+			offset = response.next;
+		} while (Number.isInteger(offset));
+		return { summary: response.summary, entries };
+	},
+
 	async openSession(id, scroll = false) {
 		const request = ++this.request;
+		this.refreshOwnership = null;
 		this.detailId = id;
 		this.detail.hidden = false;
 		this.detail.textContent = '正在读取录制…';
 		if (scroll)
 			this.detail.scrollIntoView({ block: 'start' });
 		try {
-			let offset = 0;
-			const entries = [];
-			let response;
-			do {
-				response = checked(await get(id, offset));
-				if (request !== this.request)
-					return;
-				entries.push(...response.entries);
-				offset = response.next;
-			} while (Number.isInteger(offset));
-			this.drawSession(response.summary, entries);
+			const result = await this.readSession(id, request);
+			if (result && request === this.request)
+				this.drawSession(result.summary, result.entries);
 		} catch (error) {
 			if (request === this.request)
 				this.detail.textContent = String(error.message || error);
@@ -435,7 +447,7 @@ return view.extend({
 		const table = E('div', { class: 'xbox-results', role: 'table', 'aria-label': '域名、IP 与端口' });
 		const paging = E('span', { class: 'xbox-muted' });
 		const selected = E('span', { class: 'xbox-muted', role: 'status' });
-		const search = E('input', { type: 'search', id: 'xbox-search', placeholder: '搜索域名、IP 或端口' });
+		const search = E('input', { type: 'search', id: 'xbox-search', placeholder: '搜索域名、IP、端口或归属' });
 		const searchType = E('select', { 'aria-label': '条目类型' }, [
 			E('option', { value: 'all' }, ['全部']),
 			E('option', { value: 'domain' }, ['域名']),
@@ -456,7 +468,7 @@ return view.extend({
 		const matches = () => {
 			const query = search.value.trim().toLowerCase();
 			return indexed.filter(({ entry }) =>
-				(entry.value.includes(query) || entry.ports?.some(([protocol, port]) =>
+				(entry.value.includes(query) || asn.matchesOwner(entry, query) || entry.ports?.some(([protocol, port]) =>
 					(protocol.toLowerCase() + ' ' + port).includes(query))) &&
 				(searchType.value === 'all' || searchType.value === (entry.sources ? 'domain' : 'ip')));
 		};
@@ -487,7 +499,7 @@ return view.extend({
 					E('div', { role: 'cell' }, [
 						E('label', { class: 'xbox-result-label' }, [choice,
 							E('span', {}, [E('span', { class: 'xbox-target' }, [entry.value]),
-								E('small', { class: 'xbox-muted' }, [source])])
+								E('small', { class: 'xbox-muted' }, [source]), asn.ownerBadge(entry)])
 						])
 					]),
 					E('div', { class: 'xbox-ports', role: 'cell' }, ports.length ? ports : [
@@ -502,6 +514,23 @@ return view.extend({
 			updateSelected();
 		};
 		const resetPage = () => { page = 0; drawRows(); };
+		this.refreshOwnership = async () => {
+			const request = this.request;
+			try {
+				const result = await this.readSession(session.id, request);
+				if (!result || request !== this.request)
+					return;
+				const owners = new Map(result.entries.filter(entry => entry.owner).map(entry => [entry.value, entry.owner]));
+				for (const entry of entries) {
+					if (!entry.sources)
+						entry.owner = owners.get(entry.value);
+				}
+				resetPage();
+			} catch (error) {
+				if (request === this.request)
+					errorNotice(error);
+			}
+		};
 		search.addEventListener('input', resetPage);
 		searchType.addEventListener('change', resetPage);
 
@@ -608,6 +637,7 @@ return view.extend({
 				if (removed.has(this.detailId)) {
 					++this.request;
 					this.detailId = null;
+					this.refreshOwnership = null;
 					this.detail.hidden = true;
 				}
 				this.historyItems = this.historyItems.filter(session => !removed.has(session.id));

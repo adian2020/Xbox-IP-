@@ -4,20 +4,20 @@ OpenWrt 的 LuCI 插件。按 Xbox 的 MAC 地址或局域网 IP 开始一次录
 
 ## 安装
 
-将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.4.1 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.4.1)
+将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.5.0 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.5.0)
 
 **使用 opkg 的 OpenWrt（例如 23.05、24.10）**
 
 ```sh
 opkg update
-opkg install /tmp/luci-app-xbox-capture_1.4.1-1_all.ipk
+opkg install /tmp/luci-app-xbox-capture_1.5.0-1_all.ipk
 ```
 
 **使用 apk 的 OpenWrt（例如 25.12）**
 
 ```sh
 apk update
-apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.4.1-r1.apk
+apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.5.0-r1.apk
 ```
 
 这里的 `--allow-untrusted` 用于安装这一个本地未签名的 APK。安装完成后重新打开 LuCI，进入 **服务 → Xbox 网络录制**。也可以用 `ubus call xbox-capture status '{}'` 确认插件已注册。
@@ -36,6 +36,12 @@ apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.4.1-r1.apk
 ### 实时抓取面板
 
 在 **实时状态** 点 **打开抓取面板**。录制期间每两秒更新已抓到的域名、公网 IP、端口和最近新增信息的时间。可以按类型筛选、搜索或分页。实时列表遵循当前录制模式，录制结束后可从面板进入完整录制。
+
+### 公网 IP 归属
+
+首次使用时点 **下载归属库**。完成后，实时面板和录制详情会在公网 IPv4／IPv6 下显示匹配的运营组织和 ASN。录制详情还可以用组织名称或 ASN 筛选。
+
+归属查询在路由器上完成。IPtoASN 提供约 11 MB 的公开压缩数据，索引存入路由器临时存储。重启后可重新下载。ASN 标明该 IP 所在的网络，判断流量用途仍可结合域名和待机基线。[IPtoASN 数据来源和许可](https://iptoasn.com/)
 
 ### 端口与代理规则
 

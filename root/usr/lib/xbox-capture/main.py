@@ -27,6 +27,8 @@ METHODS = {
     "status": {},
     "devices": {"interface": "", "offset": 0},
     "live": {"id": "", "kind": "", "query": "", "offset": 0},
+    "asn_status": {},
+    "asn_update": {},
     "start": {"name": "", "interface": "", "device": "", "minutes": 0, "baseline_id": ""},
     "stop": {},
     "sessions": {},
@@ -253,10 +255,12 @@ class Session:
 
 class Controller:
     def __init__(self, directory):
+        from asn import ASNStore
         from publisher import Publisher
 
         self.directory = directory
         self.publisher = Publisher(directory)
+        self.asn = ASNStore(directory)
         self.device_snapshot = None
         self.active = None
         self.lock = threading.Lock()
@@ -292,9 +296,14 @@ class Controller:
                 or type(offset) is not int or not 0 <= offset <= 2 * MAX_ENTRIES):
             raise ValueError("实时面板参数无效。")
         with self.lock:
-            if self.active is not None and self.active.summary["id"] == id:
-                return self.active.live_page(kind, query.strip().lower(), offset)
-        return {"id": None}
+            if self.active is None or self.active.summary["id"] != id:
+                return {"id": None}
+            result = self.active.live_page(kind, query.strip().lower(), offset)
+        with self.asn.reader() as index:
+            if index is not None:
+                for entry in result["entries"]:
+                    index.annotate(entry)
+        return result
 
     def start(self, name, interface, device, minutes, baseline_id=""):
         name = label(name, "请输入游戏或软件名称，最多 64 个字符。")
@@ -484,6 +493,10 @@ class Controller:
             return self.devices(args.get("interface"), args.get("offset", 0))
         if method == "live":
             return self.live(args.get("id"), args.get("kind", "all"), args.get("query", ""), args.get("offset", 0))
+        if method == "asn_status":
+            return self.asn.status()
+        if method == "asn_update":
+            return self.asn.update()
         if method == "start":
             return self.start(args.get("name"), args.get("interface"), args.get("device"),
                               args.get("minutes"), args.get("baseline_id", ""))
@@ -495,8 +508,13 @@ class Controller:
         if method == "get":
             with self.lock:
                 result = self.get(args.get("id"))
-            entries, next_offset = page(result_entries(result), args.get("offset", 0),
-                                        lambda entry: len(dumps(entry).encode()) + 1)
+            with self.asn.reader() as index:
+                def size(entry):
+                    if index is not None:
+                        index.annotate(entry)
+                    return len(dumps(entry).encode()) + 1
+
+                entries, next_offset = page(result_entries(result), args.get("offset", 0), size)
             return {"summary": result["summary"], "entries": entries, "next": next_offset}
         if method == "export":
             with self.lock:

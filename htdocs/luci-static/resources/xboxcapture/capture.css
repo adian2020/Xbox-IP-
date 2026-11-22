@@ -585,6 +585,7 @@
 
 #xbox-capture .xbox-live-actions {
 	margin-top: 10px;
+	flex-wrap: wrap;
 }
 
 #xbox-capture .xbox-monitor-trigger {
@@ -748,4 +749,19 @@
 	#xbox-capture .xbox-monitor { padding: 11px; }
 	#xbox-capture .xbox-monitor-row { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
 	#xbox-capture .xbox-monitor time { grid-column: 1 / -1; }
+}
+
+#xbox-capture .xbox-asn-status {
+	display: block;
+	margin-top: 7px;
+	overflow-wrap: anywhere;
+}
+
+#xbox-capture .xbox-asn-owner {
+	color: var(--xbox-accent);
+	overflow-wrap: anywhere;
+}
+
+#xbox-capture .xbox-monitor .xbox-asn-owner {
+	color: var(--monitor-accent);
 }

@@ -1,6 +1,7 @@
 'use strict';
 'require baseclass';
 'require rpc';
+'require xboxcapture.asn as asn';
 
 const object = 'xbox-capture';
 const devices = rpc.declare({ object, method: 'devices', params: ['interface', 'offset'], raise: true });
@@ -242,7 +243,8 @@ function captureMonitor(openRecord) {
 					return E('li', { class: 'xbox-monitor-row' }, [
 						E('div', { class: 'xbox-monitor-target' }, [
 							E('strong', {}, [entry.value]),
-							E('small', {}, [source])
+							E('small', {}, [source]),
+							asn.ownerBadge(entry)
 						]),
 						E('div', { class: 'xbox-ports' }, found.length ? found : [E('span', {}, ['—'])]),
 						E('time', {}, [new Date(entry.seen * 1000).toLocaleTimeString()])
