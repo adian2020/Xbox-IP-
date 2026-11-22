@@ -21,15 +21,20 @@ MAX_ROWS = 2_500_000
 MAX_LINE = 4096
 MAX_NAME_BYTES = 192
 
-MAGIC = b"XAS1"
+MAGIC = b"XAS2"
+LEGACY_MAGIC = b"XAS1"
 HEADER = struct.Struct(">4sIII")
-RANGES = {4: struct.Struct(">4sI"), 6: struct.Struct(">16sI")}
+ADDRESS_BYTES = {4: 4, 6: 16}
+RANGES = {family: struct.Struct(f">{width}sI2s") for family, width in ADDRESS_BYTES.items()}
+LEGACY_RANGES = {family: struct.Struct(f">{width}sI") for family, width in ADDRESS_BYTES.items()}
 NUMBER = struct.Struct(">I")
 NAME = struct.Struct(">IIH")
+UNKNOWN_COUNTRY = b"\0\0"
+UNROUTED = (0, UNKNOWN_COUNTRY)
 
 
 def download_feed(destination):
-    request = Request(SOURCE_URL, headers={"User-Agent": "Xbox-Capture/1.5.0"})
+    request = Request(SOURCE_URL, headers={"User-Agent": "Xbox-Capture/1.5.1"})
     deadline = time.monotonic() + 150
     with urlopen(request, timeout=20) as response, destination.open("wb") as file:
         if not response.geturl().startswith("https://"):
@@ -48,17 +53,16 @@ def download_feed(destination):
 
 
 def build_index(lines, file):
-    """Use one ordered boundary per contiguous ASN range and a shared name table."""
+    """Use one ordered boundary per contiguous origin and a shared ASN name table."""
     counts = {4: 0, 6: 0}
     names = {}
     family = 4
     last_end = -1
-    last_asn = 0
+    last_origin = UNROUTED
     file.write(b"\0" * HEADER.size)
 
-    def boundary(start, asn):
-        spec = RANGES[family]
-        file.write(spec.pack(start.to_bytes(spec.size - NUMBER.size, "big"), asn))
+    def boundary(start, origin):
+        file.write(RANGES[family].pack(start.to_bytes(ADDRESS_BYTES[family], "big"), *origin))
         counts[family] += 1
         if file.tell() > MAX_INDEX_SIZE:
             raise ValueError("归属索引超过大小限制。")
@@ -68,7 +72,7 @@ def build_index(lines, file):
             raise ValueError("归属数据超过大小限制。")
         fields = line.rstrip(b"\r\n").split(b"\t", 4)
         try:
-            first, last, number, _, description = fields
+            first, last, number, country, description = fields
             start_ip, end_ip = ipaddress.ip_address(first.decode()), ipaddress.ip_address(last.decode())
             start, end = int(start_ip), int(end_ip)
             asn = int(number)
@@ -78,19 +82,21 @@ def build_index(lines, file):
                 or not 0 <= asn <= 0xffffffff):
             raise ValueError("归属库包含无效的地址范围。")
 
+        country = country if len(country) == 2 and country.isalpha() and country.isupper() else UNKNOWN_COUNTRY
+        origin = (asn, country) if asn else UNROUTED
         if start_ip.version != family:
-            if last_asn and last_end < 0xffffffff:
-                boundary(last_end + 1, 0)
+            if last_origin != UNROUTED and last_end < 0xffffffff:
+                boundary(last_end + 1, UNROUTED)
             family = start_ip.version
-            last_end, last_asn = -1, 0
+            last_end, last_origin = -1, UNROUTED
         if start <= last_end:
             raise ValueError("归属库包含重叠或未排序的地址范围。")
-        if last_asn and start > last_end + 1:
-            boundary(last_end + 1, 0)
-            last_asn = 0
-        if asn != last_asn:
-            boundary(start, asn)
-        last_end, last_asn = end, asn
+        if last_origin != UNROUTED and start > last_end + 1:
+            boundary(last_end + 1, UNROUTED)
+            last_origin = UNROUTED
+        if origin != last_origin:
+            boundary(start, origin)
+        last_end, last_origin = end, origin
 
         if asn and asn not in names:
             text = description.decode(errors="replace").strip()
@@ -99,8 +105,8 @@ def build_index(lines, file):
             if len(names) > 220_000:
                 raise ValueError("归属库包含过多的 ASN。")
 
-    if last_asn and last_end < (1 << (128 if family == 6 else 32)) - 1:
-        boundary(last_end + 1, 0)
+    if last_origin != UNROUTED and last_end < (1 << (8 * ADDRESS_BYTES[family])) - 1:
+        boundary(last_end + 1, UNROUTED)
     if not all(counts.values()):
         raise ValueError("归属库缺少 IPv4 或 IPv6 数据。")
 
@@ -122,10 +128,12 @@ class ASNIndex:
         if not HEADER.size <= len(data) <= MAX_INDEX_SIZE:
             raise ValueError("invalid database size")
         magic, self.count4, self.count6, self.name_count = HEADER.unpack_from(data)
-        self.v6_start = HEADER.size + self.count4 * RANGES[4].size
-        self.name_start = self.v6_start + self.count6 * RANGES[6].size
+        self.has_country = magic == MAGIC
+        self.ranges = RANGES if self.has_country else LEGACY_RANGES
+        self.v6_start = HEADER.size + self.count4 * self.ranges[4].size
+        self.name_start = self.v6_start + self.count6 * self.ranges[6].size
         self.text_start = self.name_start + self.name_count * NAME.size
-        if magic != MAGIC or self.text_start > len(data):
+        if magic not in (MAGIC, LEGACY_MAGIC) or self.text_start > len(data):
             raise ValueError("invalid database header")
         self.data = data
 
@@ -135,7 +143,7 @@ class ASNIndex:
             ip = ip.ipv4_mapped
         target = ip.packed
         width = len(target)
-        spec = RANGES[ip.version]
+        spec = self.ranges[ip.version]
         beginning, count = (HEADER.size, self.count4) if ip.version == 4 else (self.v6_start, self.count6)
 
         def key(position):
@@ -145,7 +153,8 @@ class ASNIndex:
         position = bisect_right(range(count), target, key=key) - 1
         if position < 0:
             return None
-        asn = NUMBER.unpack_from(self.data, beginning + position * spec.size + width)[0]
+        record = spec.unpack_from(self.data, beginning + position * spec.size)
+        asn = record[1]
         if not asn:
             return None
 
@@ -159,7 +168,11 @@ class ASNIndex:
             start = self.text_start + offset
             if start + length <= len(self.data):
                 organization = self.data[start:start + length].decode(errors="ignore")
-        return {"asn": asn, "organization": organization}
+        result = {"asn": asn, "organization": organization}
+        if self.has_country:
+            country = record[2]
+            result["country"] = country.decode("ascii", errors="ignore") if country != UNKNOWN_COUNTRY else None
+        return result
 
     def annotate(self, entry):
         if "sources" not in entry:
@@ -199,12 +212,16 @@ class ASNStore:
 
     def status(self):
         with self.lock:
+            magic = b""
+            updated = None
             try:
-                info = self.path.stat()
-                updated = int(info.st_mtime)
+                with self.path.open("rb") as file:
+                    magic = file.read(4)
+                    if magic in (MAGIC, LEGACY_MAGIC):
+                        updated = int(os.fstat(file.fileno()).st_mtime)
             except OSError:
-                updated = None
-            return {"loading": self.loading, "updated": updated, "error": self.error}
+                pass
+            return {"loading": self.loading, "updated": updated, "has_country": magic == MAGIC, "error": self.error}
 
     def update(self):
         with self.lock:

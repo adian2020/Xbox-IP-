@@ -196,7 +196,7 @@ return view.extend({
 			E('div', { class: 'xbox-actions xbox-field-wide' }, [this.startButton, this.stopButton])
 		]);
 		const root = E('div', { id: 'xbox-capture' }, [
-			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.5.0' }),
+			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.5.1' }),
 			E('header', { class: 'xbox-heading' }, [
 				E('h2', {}, ['Xbox 网络录制']),
 				E('p', { class: 'xbox-muted' }, ['先开始录制，再打开游戏。'])

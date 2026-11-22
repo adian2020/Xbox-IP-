@@ -4,6 +4,7 @@ import gzip
 import ipaddress
 from io import BytesIO
 from pathlib import Path
+import struct
 import sys
 import tempfile
 import unittest
@@ -36,6 +37,36 @@ class OwnershipTests(unittest.TestCase):
         for ip in ("0.255.255.255", "1.0.0.5", "1.0.0.10", "1.0.0.11", "2606:4700::1200"):
             self.assertIsNone(index.lookup(ip))
 
+    def test_country_follows_each_range(self):
+        feed = FEED.replace(b"1.0.0.3\t1.0.0.4\t13335\tUS", b"1.0.0.3\t1.0.0.4\t13335\tJP")
+        feed = feed.replace(b"2606:4700::11ff\t13335\tUS", b"2606:4700::11ff\t13335\tUnknown")
+        output = BytesIO()
+        build_index(BytesIO(feed), output)
+        index = ASNIndex(output.getvalue())
+        self.assertEqual(index.lookup("1.0.0.2")["country"], "US")
+        self.assertEqual(index.lookup("::ffff:1.0.0.3")["country"], "JP")
+        self.assertIsNone(index.lookup("2606:4700::11ff")["country"])
+
+    def test_existing_database_still_loads_and_gets_the_update_hint(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = ASNStore(Path(temp))
+            legacy = (struct.pack(">4sIII", b"XAS1", 1, 1, 1)
+                      + struct.pack(">4sI", ipaddress.ip_address("1.0.0.0").packed, 13335)
+                      + struct.pack(">16sI", ipaddress.ip_address("2606:4700::1100").packed, 13335)
+                      + struct.pack(">IIH", 13335, 0, len(b"Cloudflare"))
+                      + b"Cloudflare")
+            store.path.write_bytes(legacy)
+            self.assertFalse(store.status()["has_country"])
+            self.assertIsNotNone(store.status()["updated"])
+            with store.reader() as index:
+                self.assertEqual(index.lookup("1.0.0.0"), {"asn": 13335, "organization": "Cloudflare"})
+                self.assertEqual(index.lookup("2606:4700::1100")["asn"], 13335)
+            with patch("asn.download_feed", side_effect=lambda path: path.write_bytes(gzip.compress(FEED))):
+                store.refresh()
+            self.assertTrue(store.status()["has_country"])
+            with store.reader() as index:
+                self.assertEqual(index.lookup("2606:4700::1100")["country"], "US")
+
     def test_failed_refresh_keeps_the_previous_database(self):
         with tempfile.TemporaryDirectory() as temp:
             store = ASNStore(Path(temp))
@@ -64,6 +95,7 @@ class OwnershipTests(unittest.TestCase):
             live = controller.dispatch("live", {"id": id})["entries"]
             self.assertNotIn("owner", live[0])
             self.assertEqual(live[1]["owner"]["asn"], 8075)
+            self.assertEqual(live[1]["owner"]["country"], "US")
             controller.save(session.result())
             result = controller.dispatch("get", {"id": id})
             self.assertEqual(result["entries"][1]["owner"], live[1]["owner"])
