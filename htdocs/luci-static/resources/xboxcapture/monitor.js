@@ -138,7 +138,7 @@ function devicePicker(address, interfaceInput) {
 	]);
 }
 
-function captureMonitor(openRecord) {
+function captureMonitor(openRecord, canAuto) {
 	let active = null;
 	let available = null;
 	let trackedId = null;
@@ -253,6 +253,8 @@ function captureMonitor(openRecord) {
 				}));
 			}
 			draw();
+			if (canAuto())
+				await asn.runAutomatic(target, page.entries).catch(() => {});
 		} catch (error) {
 			if (request === generation)
 				message.textContent = error.message;

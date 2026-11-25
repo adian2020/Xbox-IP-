@@ -30,6 +30,7 @@ METHODS = {
     "asn_status": {},
     "asn_update": {},
     "domain_lookup": {"id": "", "domain": "", "resolver": ""},
+    "domain_auto": {"id": "", "domains": []},
     "start": {"name": "", "interface": "", "device": "", "minutes": 0, "baseline_id": ""},
     "stop": {},
     "sessions": {},
@@ -54,6 +55,7 @@ MAX_REQUEST = 16 * 1024
 MAX_RESPONSE = 48 * 1024
 PAGE_BYTES = 20 * 1024
 LIVE_ROWS = 24
+AUTO_BATCH = 16
 SESSION_ID = re.compile(r"[0-9a-f]{32}")
 INTERFACE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,14}")
 BASELINE_STATES = {"stopped", "timeout", "shutdown"}
@@ -351,6 +353,54 @@ class Controller:
             job = self.domain_lookups.get((id, name))
             if job and job["bindings"]:
                 index.annotate(entry, job["bindings"])
+            if "DNS" in entry["sources"] and not entry.get("owners"):
+                from dnslookup import automatic_name
+
+                if not automatic_name(name):
+                    entry["auto_lookup"] = "unavailable"
+                    return
+                automatic = self.domain_lookups.get((None, name))
+                if automatic:
+                    index.annotate(entry, automatic["bindings"])
+                    if not entry.get("owners"):
+                        entry["auto_lookup"] = "pending" if automatic["pending"] else "unavailable"
+
+    def automatic_lookups(self, id, names):
+        from dnslookup import automatic_name
+
+        self.path(id)
+        if (not isinstance(names, list) or not 1 <= len(names) <= AUTO_BATCH
+                or any(not isinstance(name, str) or len(name) > 253 or not name.isascii()
+                       or domain_name(name.encode("ascii")) != name for name in names)):
+            raise ValueError("自动补查的域名列表无效。")
+        with self.lock:
+            if self.active and self.active.summary["id"] == id:
+                session = self.active
+                sources = {name: session.domains.get(name, ()) for name in names}
+                bindings = {name: session.domain_bindings(name) for name in names}
+            else:
+                result = self.get(id)
+                sources = {row["value"]: row["sources"] for row in result["domains"]}
+                bindings = result.get("domain_ips", {})
+        rows = []
+        with self.asn.reader() as index:
+            if index is None:
+                return {"entries": rows}
+            for name in dict.fromkeys(names):
+                if not automatic_name(name) or "DNS" not in sources.get(name, ()):
+                    rows.append({"value": name, "auto_lookup": "unavailable"})
+                    continue
+                entry = {"value": name, "sources": ["DNS"]}
+                self.annotate_owner(index, id, entry, bindings)
+                if not entry.get("owners") and "auto_lookup" not in entry:
+                    manual = self.domain_lookups.get((id, name))
+                    if manual and manual["pending"]:
+                        continue
+                    if not self.domain_lookups.start((None, name), "auto"):
+                        continue
+                    entry["auto_lookup"] = "pending"
+                rows.append(entry)
+        return {"entries": rows}
 
     def domain_lookup(self, id, name, resolver):
         self.path(id)
@@ -583,6 +633,8 @@ class Controller:
             return self.asn.update()
         if method == "domain_lookup":
             return self.domain_lookup(args.get("id"), args.get("domain"), args.get("resolver", ""))
+        if method == "domain_auto":
+            return self.automatic_lookups(args.get("id"), args.get("domains"))
         if method == "start":
             return self.start(args.get("name"), args.get("interface"), args.get("device"),
                               args.get("minutes"), args.get("baseline_id", ""))

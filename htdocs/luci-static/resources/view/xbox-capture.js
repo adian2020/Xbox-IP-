@@ -108,9 +108,11 @@ return view.extend({
 		this.historyRequest = 0;
 		this.hasHistory = false;
 		this.detailId = null;
-		this.liveMonitor = monitor.captureMonitor(id => this.openSession(id, true));
 		this.refreshOwnership = null;
+		this.autoHistory = null;
 		const ownership = asn.controls(() => this.refreshOwnership?.());
+		this.canAuto = ownership.canAuto;
+		this.liveMonitor = monitor.captureMonitor(id => this.openSession(id, true), this.canAuto);
 
 		const name = E('input', {
 			id: 'xbox-game', type: 'text', maxlength: 64, required: true, placeholder: '例如 Forza Horizon 5'
@@ -196,7 +198,7 @@ return view.extend({
 			E('div', { class: 'xbox-actions xbox-field-wide' }, [this.startButton, this.stopButton])
 		]);
 		const root = E('div', { id: 'xbox-capture' }, [
-			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.6.3' }),
+			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.6.4' }),
 			E('header', { class: 'xbox-heading' }, [
 				E('h2', {}, ['Xbox 网络录制']),
 				E('p', { class: 'xbox-muted' }, ['先开始录制，再打开游戏。'])
@@ -213,6 +215,7 @@ return view.extend({
 					]),
 					this.captureText,
 					E('div', { class: 'xbox-live-actions' }, [this.liveMonitor.button, ownership.button]),
+					ownership.automatic,
 					ownership.message,
 					ownership.bar
 				])
@@ -236,7 +239,7 @@ return view.extend({
 			])
 		]);
 
-		poll.add(() => this.refresh(), 2);
+		poll.add(() => Promise.all([this.refresh(), this.autoHistory?.()]), 2);
 		poll.add(ownership.refresh, 1);
 		this.refresh();
 		return root;
@@ -426,6 +429,7 @@ return view.extend({
 	async openSession(id, scroll = false) {
 		const request = ++this.request;
 		this.refreshOwnership = null;
+		this.autoHistory = null;
 		this.detailId = id;
 		this.detail.hidden = false;
 		this.detail.textContent = '正在读取录制…';
@@ -446,6 +450,7 @@ return view.extend({
 		const keywordExcluded = new Set();
 		let page = 0;
 		let exporting = false;
+		let checkingDomains = false;
 		const table = E('div', { class: 'xbox-results', role: 'table', 'aria-label': '域名、IP 与端口' });
 		const paging = E('span', { class: 'xbox-muted' });
 		const selected = E('span', { class: 'xbox-muted', role: 'status' });
@@ -488,6 +493,7 @@ return view.extend({
 		const drawRows = () => {
 			const matching = matches();
 			const pages = Math.max(1, Math.ceil(matching.length / rowsPerPage));
+			page = Math.min(page, pages - 1);
 			paging.textContent = (page + 1) + ' / ' + pages + ' 页';
 			previous.disabled = page <= 0;
 			next.disabled = page + 1 >= pages;
@@ -535,7 +541,6 @@ return view.extend({
 						keywordExcluded.add(index);
 				}
 			}
-			resetPage();
 		};
 		this.refreshOwnership = async () => {
 			const request = this.request;
@@ -547,15 +552,51 @@ return view.extend({
 					const latest = result.entries[index];
 					entry.owner = latest?.owner;
 					entry.owners = latest?.owners;
+					entry.auto_lookup = latest?.auto_lookup;
 				}
 				applyKeywordExclusions();
+				drawRows();
 			} catch (error) {
 				if (request === this.request)
 					errorNotice(error);
 			}
 		};
+		this.autoHistory = async () => {
+			const enabled = this.canAuto();
+			if (checkingDomains || (!enabled && !entries.some(entry => entry.auto_lookup === 'pending')))
+				return;
+			const request = this.request;
+			checkingDomains = true;
+			try {
+				if (!enabled) {
+					await this.refreshOwnership();
+					return;
+				}
+				const updates = await asn.runAutomatic(session.id, entries);
+				if (!updates.length || request !== this.request)
+					return;
+				const byName = new Map(updates.map(entry => [entry.value, entry]));
+				let changed = false;
+				for (const entry of entries) {
+					const update = entry.sources && !entry.owners?.length && byName.get(entry.value);
+					if (update && (update.owners?.length || entry.auto_lookup !== update.auto_lookup)) {
+						entry.owners = update.owners;
+						entry.auto_lookup = update.auto_lookup;
+						changed = true;
+					}
+				}
+				if (changed) {
+					applyKeywordExclusions();
+					drawRows();
+				}
+			} catch (_) {
+				// Manual lookup remains available if an automatic request fails.
+			} finally {
+				checkingDomains = false;
+			}
+		};
 		search.addEventListener('input', resetPage);
-		excludeKeywords.addEventListener('input', applyKeywordExclusions);
+		excludeKeywords.addEventListener('input', () => { applyKeywordExclusions(); resetPage(); });
 		searchType.addEventListener('change', resetPage);
 
 		const download = button('下载 YAML', async () => {
@@ -626,6 +667,7 @@ return view.extend({
 			])
 		);
 		drawRows();
+		this.autoHistory();
 	},
 
 	async download(id, format, policy, omit) {
@@ -666,6 +708,7 @@ return view.extend({
 					++this.request;
 					this.detailId = null;
 					this.refreshOwnership = null;
+					this.autoHistory = null;
 					this.detail.hidden = true;
 				}
 				this.historyItems = this.historyItems.filter(session => !removed.has(session.id));

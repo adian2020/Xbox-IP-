@@ -4,20 +4,20 @@ OpenWrt 的 LuCI 插件。按 Xbox 的 MAC 地址或局域网 IP 开始一次录
 
 ## 安装
 
-将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.6.3 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.6.3)
+将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.6.4 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.6.4)
 
 **使用 opkg 的 OpenWrt（例如 23.05、24.10）**
 
 ```sh
 opkg update
-opkg install /tmp/luci-app-xbox-capture_1.6.3-1_all.ipk
+opkg install /tmp/luci-app-xbox-capture_1.6.4-1_all.ipk
 ```
 
 **使用 apk 的 OpenWrt（例如 25.12）**
 
 ```sh
 apk update
-apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.6.3-r1.apk
+apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.6.4-r1.apk
 ```
 
 这里的 `--allow-untrusted` 用于安装这一个本地未签名的 APK。安装完成后重新打开 LuCI，进入 **服务 → Xbox 网络录制**。也可以用 `ubus call xbox-capture status '{}'` 确认插件已注册。
@@ -45,7 +45,7 @@ apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.6.3-r1.apk
 
 1.6.0 起，新录制会用发往 Xbox 的明文 DNS 回应（A、AAAA 和 CNAME）以及 TLS SNI 连接关联域名和公网 IP。同一域名最多显示三个不同归属。只看到域名、私网地址或 Fake IP 的条目可能没有归属标签。使用 `any` 接口时，DNS 回应关联需要已知的 Xbox 局域网 IP。
 
-域名无归属标签时，可在实时面板或已有录制中点 **补查归属**。确认后只向所选 DNS 查询该域名。路由器 DNS 只返回 Fake IP 时，可尝试 **阿里公共 DNS**。补查显示当前解析得到的归属，结果暂存在服务内存。录制中的关联优先显示，导出规则仍来自抓包数据。
+打开实时面板或录制详情后，带有 **DNS** 来源且缺少归属的域名会分批交给阿里公共 DNS 补查。实时面板处理当前页，录制详情处理整条录制。插件会跳过常见的局域网和特殊用途域名。可在 **实时状态** 关闭 **自动用阿里公共 DNS 补查**，也可以对尚无结果的条目点 **补查归属** 手动查询。自动补查会标注来源，结果在路由器内存中缓存约 30 分钟。录制中的关联优先显示，导出规则仍来自抓包数据。
 
 归属查询在路由器上完成。IPtoASN 提供约 11 MB 的公开压缩数据，索引存入路由器临时存储。重启后可重新下载。国家或地区取自归属库，实际机房位置可能不同。ASN 标明该 IP 所在的网络，判断流量用途仍可结合域名和待机基线。[IPtoASN 数据来源和许可](https://iptoasn.com/)
 

@@ -7,6 +7,7 @@ from pathlib import Path
 import struct
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -194,6 +195,72 @@ class OwnershipTests(unittest.TestCase):
             result = controller.dispatch("get", {"id": id, "offset": 0})
             self.assertGreater(result["next"], 0)
             self.assertLess(len(dumps(result).encode()), PAGE_BYTES + 1024)
+
+    def test_automatic_dns_limits_and_reuses_lookups(self):
+        with tempfile.TemporaryDirectory() as temp:
+            controller = Controller(Path(temp))
+            device = Device("192.168.1.50")
+            session = Session("Game", "br-lan", device, device, 10, None)
+            id = session.summary["id"]
+            controller.active = session
+            pending = ["dns.example.com", "mixed.example.com", "later.example.com"]
+            names = pending + ["local.home.arpa", "tls.example.com", "captured.example.com", "unrecorded.example.com"]
+            resolver_ip = ipaddress.ip_address("192.168.1.1").packed
+            fake = ipaddress.ip_address("198.18.0.1").packed
+            address = ipaddress.ip_address("1.0.0.8").packed
+            session.observe(resolver_ip, set(pending + ["local.home.arpa", "captured.example.com"]), "DNS")
+            session.observe(fake, {"mixed.example.com", "tls.example.com"}, "TLS SNI")
+            session.observe(address, {"captured.example.com"}, "TLS SNI")
+            args = {"id": id, "domains": names}
+            self.assertEqual(controller.dispatch("domain_auto", args)["entries"], [])
+            with controller.asn.path.open("wb") as output:
+                build_index(BytesIO(FEED), output)
+
+            release = threading.Event()
+
+            def resolve(name):
+                release.wait(3)
+                return {address} if name != "mixed.example.com" else set()
+
+            def state(args):
+                return {entry["value"]: entry for entry in controller.dispatch("domain_auto", args)["entries"]}
+
+            with patch("dnslookup.resolve_alidns", side_effect=resolve) as lookup:
+                try:
+                    first = state(args)
+                    self.assertNotIn("later.example.com", first)
+                    self.assertEqual([first[name]["auto_lookup"] for name in pending[:2]], ["pending", "pending"])
+                    self.assertEqual(first["captured.example.com"]["owners"][0]["source"], "TLS SNI")
+                    for name in ["local.home.arpa", "tls.example.com", "unrecorded.example.com"]:
+                        self.assertEqual(first[name]["auto_lookup"], "unavailable")
+                    self.assertEqual(state(args), first)
+                finally:
+                    release.set()
+
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    finished = state(args)
+                    if all(name in finished and finished[name].get("auto_lookup") != "pending" for name in pending):
+                        break
+                    time.sleep(.01)
+                else:
+                    self.fail("automatic DNS lookups did not finish")
+                self.assertEqual(finished[pending[1]]["auto_lookup"], "unavailable")
+                self.assertEqual(finished[pending[0]]["owners"][0]["source"], "阿里公共 DNS 自动补查")
+                recorded = controller.dispatch("live", {"id": id})["entries"]
+                self.assertTrue(any(entry["value"] == pending[0] and entry.get("owners") for entry in recorded))
+
+                controller.save(session.result())
+                controller.active = None
+                other = "b" * 32
+                controller.save({"summary": {"id": other}, "domains": [
+                    {"value": name, "sources": ["DNS"]} for name in pending
+                ], "ips": []})
+                cached = state({"id": other, "domains": pending})
+                self.assertEqual(cached[pending[0]]["owners"], finished[pending[0]]["owners"])
+                self.assertEqual(cached[pending[1]]["auto_lookup"], "unavailable")
+                self.assertCountEqual([call.args[0] for call in lookup.call_args_list], pending)
+                self.assertEqual(controller.get(other)["ips"], [])
 
 
 if __name__ == "__main__":

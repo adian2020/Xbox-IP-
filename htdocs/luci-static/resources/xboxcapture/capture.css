@@ -760,6 +760,10 @@
 	overflow-wrap: anywhere;
 }
 
+#xbox-capture .xbox-asn-auto {
+	margin: 8px 0 0;
+}
+
 #xbox-capture .xbox-asn-progress {
 	width: 100%;
 	height: 10px;

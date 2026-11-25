@@ -7,6 +7,9 @@ const status = rpc.declare({ object: 'xbox-capture', method: 'asn_status', raise
 const update = rpc.declare({ object: 'xbox-capture', method: 'asn_update', raise: true });
 const lookup = rpc.declare({ object: 'xbox-capture', method: 'domain_lookup',
 	params: ['id', 'domain', 'resolver'], raise: true });
+const automaticLookup = rpc.declare({ object: 'xbox-capture', method: 'domain_auto',
+	params: ['id', 'domains'], raise: true });
+const autoStorageKey = 'xbox-capture.auto-dns';
 
 const namesByAsn = {
 	3462: '中华电信',
@@ -84,6 +87,17 @@ const regions = typeof Intl.DisplayNames === 'function'
 function controls(onUpdated) {
 	let current = null;
 	let busy = false;
+	const auto = E('input', { type: 'checkbox' });
+	auto.checked = true;
+	try {
+		auto.checked = localStorage.getItem(autoStorageKey) !== '0';
+	} catch (_) {}
+	auto.addEventListener('change', () => {
+		try {
+			localStorage.setItem(autoStorageKey, auto.checked ? '1' : '0');
+		} catch (_) {}
+	});
+	const automatic = E('label', { class: 'xbox-check xbox-asn-auto' }, [auto, '自动用阿里公共 DNS 补查']);
 	const message = E('small', { class: 'xbox-muted xbox-asn-status', role: 'status' });
 	const bar = E('progress', { class: 'xbox-asn-progress', max: 100, hidden: true, 'aria-label': '归属库更新进度' });
 	const button = E('button', { type: 'button', class: 'xbox-button', click: () => run(update) }, ['下载归属库']);
@@ -151,7 +165,7 @@ function controls(onUpdated) {
 
 	const refresh = () => !current || current.loading ? run(status) : null;
 	refresh();
-	return { button, message, bar, refresh };
+	return { button, message, bar, refresh, automatic, canAuto: () => auto.checked && !!current?.updated };
 }
 
 function ownerLabels(owner) {
@@ -231,11 +245,23 @@ function showLookup(id, domain, onFound) {
 function lookupButton(entry, id, onFound) {
 	if (!entry.sources || entry.owners?.length)
 		return '';
+	if (entry.auto_lookup === 'pending')
+		return E('small', { class: 'xbox-muted xbox-asn-lookup-source' }, ['阿里公共 DNS 补查中…']);
 	return E('button', {
 		type: 'button', class: 'xbox-asn-query',
 		'aria-label': '补查域名归属 ' + entry.value,
 		click: () => showLookup(id, entry.value, onFound)
 	}, ['补查归属']);
+}
+
+async function runAutomatic(id, entries) {
+	const names = entries.filter(entry => entry.sources?.includes('DNS') &&
+		!entry.owners?.length && entry.auto_lookup !== 'unavailable')
+		.slice(0, 16).map(entry => entry.value);
+	if (!names.length)
+		return [];
+	const result = await automaticLookup(id, names);
+	return result?.entries || [];
 }
 
 function matchesOwner(entry, query) {
@@ -247,4 +273,4 @@ function matchesOwner(entry, query) {
 	});
 }
 
-return baseclass.extend({ controls, ownerBadge, lookupButton, matchesOwner });
+return baseclass.extend({ controls, ownerBadge, lookupButton, matchesOwner, runAutomatic });

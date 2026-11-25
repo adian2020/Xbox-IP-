@@ -1,4 +1,4 @@
-"""Resolve a recorded domain only when the LuCI user requests a lookup."""
+"""Resolve recorded domains in a bounded pool of DNS workers."""
 
 import base64
 from collections import OrderedDict
@@ -9,16 +9,26 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from packets import dns_answers, is_public
 
 
-RESOLVERS = {"system": "路由器 DNS 补查", "alidns": "阿里公共 DNS 补查"}
-MAX_LOOKUPS = 192
+RESOLVERS = {"system": "路由器 DNS 补查", "alidns": "阿里公共 DNS 补查", "auto": "阿里公共 DNS 自动补查"}
+MAX_LOOKUPS = 2048
 MAX_PENDING = 2
 MAX_ANSWERS = 16
 MAX_DNS_BYTES = 65535
+AUTO_CACHE_SECONDS = 1800
+LOCAL_SUFFIXES = (
+    ".local", ".lan", ".home", ".internal", ".localhost", ".home.arpa",
+    ".in-addr.arpa", ".ip6.arpa", ".test", ".example", ".invalid", ".onion",
+)
+
+
+def automatic_name(name):
+    return "_" not in name and not name.endswith(LOCAL_SUFFIXES) and not name.rsplit(".", 1)[-1].isdecimal()
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -78,14 +88,19 @@ class DomainLookups:
 
     def get(self, key):
         with self.lock:
-            return self.jobs.get(key)
+            job = self.jobs.get(key)
+            if job and job.get("expires", float("inf")) > time.monotonic():
+                return job
 
     def start(self, key, resolver):
         with self.lock:
             current = self.jobs.get(key)
-            if current and current["pending"]:
-                return
+            automatic = resolver == "auto"
+            if current and (current["pending"] or (automatic and current["expires"] > time.monotonic())):
+                return True
             if sum(job["pending"] for job in self.jobs.values()) >= MAX_PENDING:
+                if automatic:
+                    return False
                 raise ValueError("已有域名在补查，请稍后重试。")
             self.jobs[key] = {"pending": True, "bindings": (), "error": None}
             self.jobs.move_to_end(key)
@@ -97,6 +112,7 @@ class DomainLookups:
             except RuntimeError:
                 self.jobs.pop(key)
                 raise ValueError("无法启动域名补查。") from None
+            return True
 
     def resolve(self, key, resolver):
         bindings, error = (), "DNS 补查失败，请稍后重试。"
@@ -113,5 +129,8 @@ class DomainLookups:
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
         finally:
+            job = {"pending": False, "bindings": bindings, "error": error}
+            if resolver == "auto":
+                job["expires"] = time.monotonic() + AUTO_CACHE_SECONDS
             with self.lock:
-                self.jobs[key] = {"pending": False, "bindings": bindings, "error": error}
+                self.jobs[key] = job
