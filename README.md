@@ -4,20 +4,20 @@ OpenWrt 的 LuCI 插件。按 Xbox 的 MAC 地址或局域网 IP 开始一次录
 
 ## 安装
 
-将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.6.4 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.6.4)
+将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.6.5 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.6.5)
 
 **使用 opkg 的 OpenWrt（例如 23.05、24.10）**
 
 ```sh
 opkg update
-opkg install /tmp/luci-app-xbox-capture_1.6.4-1_all.ipk
+opkg install /tmp/luci-app-xbox-capture_1.6.5-1_all.ipk
 ```
 
 **使用 apk 的 OpenWrt（例如 25.12）**
 
 ```sh
 apk update
-apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.6.4-r1.apk
+apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.6.5-r1.apk
 ```
 
 这里的 `--allow-untrusted` 用于安装这一个本地未签名的 APK。安装完成后重新打开 LuCI，进入 **服务 → Xbox 网络录制**。也可以用 `ubus call xbox-capture status '{}'` 确认插件已注册。
@@ -38,6 +38,10 @@ apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.6.4-r1.apk
 ### 实时抓取面板
 
 在 **实时状态** 点 **打开抓取面板**。录制期间每两秒更新已抓到的域名、公网 IP、端口和最近新增信息的时间。可以按类型筛选、搜索或分页。实时列表遵循当前录制模式，录制结束后可从面板进入完整录制。
+
+### 抓包诊断
+
+录制期间会按时间采集 tcpdump 丢包计数、CPU 和软中断占用、可用内存及接口丢包统计。录制结束后，在 **录制记录 → 查看与导出** 点击 **下载抓包诊断日志** 获取文本报告。新增丢包计数对应采样区间，旧录制仅能提供当时保存的统计摘要。内核抓包丢包计数反映抓包缓冲区的丢包情况。
 
 ### 域名与公网 IP 归属
 

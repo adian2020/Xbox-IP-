@@ -15,6 +15,7 @@ const start = rpc.declare({
 const stop = rpc.declare({ object, method: 'stop', raise: true });
 const sessions = rpc.declare({ object, method: 'sessions', raise: true });
 const get = rpc.declare({ object, method: 'get', params: ['id', 'offset'], raise: true });
+const diagnostics = rpc.declare({ object, method: 'diagnostics', params: ['id', 'offset'], raise: true });
 const exportRules = rpc.declare({
 	object, method: 'export', params: ['id', 'format', 'policy', 'omit', 'offset'], raise: true
 });
@@ -198,7 +199,7 @@ return view.extend({
 			E('div', { class: 'xbox-actions xbox-field-wide' }, [this.startButton, this.stopButton])
 		]);
 		const root = E('div', { id: 'xbox-capture' }, [
-			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.6.4' }),
+			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.6.5' }),
 			E('header', { class: 'xbox-heading' }, [
 				E('h2', {}, ['Xbox 网络录制']),
 				E('p', { class: 'xbox-muted' }, ['先开始录制，再打开游戏。'])
@@ -603,7 +604,11 @@ return view.extend({
 			exporting = true;
 			updateSelected();
 			try {
-				await this.download(session.id, format.value, policy.value, selection());
+				const omit = selection();
+				const selectedFormat = format.value;
+				const selectedPolicy = policy.value;
+				await this.downloadText(offset => exportRules(session.id, selectedFormat, selectedPolicy, omit, offset),
+					'yaml', 'application/yaml');
 			} catch (error) {
 				errorNotice(error);
 			} finally {
@@ -614,6 +619,16 @@ return view.extend({
 		const selection = () => excluded.size || keywordExcluded.size
 			? indexed.map(({ index }) => isExcluded(index) ? '1' : '0').join('') : '';
 		const mrsButton = button('导出或发布 MRS', () => mrs.fromRecording(session.name, session.id, selection()));
+		const diagnosticsButton = button('下载抓包诊断日志', async () => {
+			diagnosticsButton.disabled = true;
+			try {
+				await this.downloadText(offset => diagnostics(session.id, offset), 'text', 'text/plain');
+			} catch (error) {
+				errorNotice(error);
+			} finally {
+				diagnosticsButton.disabled = false;
+			}
+		});
 		const deleteButton = button('删除这条录制', () => this.confirmRemove([session.id]), 'xbox-danger');
 
 		const notes = [];
@@ -647,6 +662,7 @@ return view.extend({
 			E('p', { class: 'xbox-muted' }, [session.interface + ' · ' + device]),
 			...(session.baseline ? [E('p', { class: 'xbox-muted' }, ['参照基线「' + session.baseline.name + '」'])] : []),
 			...notes.map(note => E('p', { class: 'xbox-note' }, [note])),
+			E('div', { class: 'xbox-actions' }, [diagnosticsButton]),
 			E('div', { class: 'xbox-detail-search' }, [
 				field('筛选结果', search),
 				field('排除关键词', excludeKeywords, '按域名、IP 或归属匹配。多个词用逗号分隔，命中项从导出中排除。'),
@@ -670,17 +686,17 @@ return view.extend({
 		this.autoHistory();
 	},
 
-	async download(id, format, policy, omit) {
+	async downloadText(fetchPage, key, mime) {
 		let offset = 0;
 		let response;
 		const parts = [];
 		do {
-			response = checked(await exportRules(id, format, policy, omit, offset));
-			parts.push(response.yaml);
+			response = checked(await fetchPage(offset));
+			parts.push(response[key]);
 			offset = response.next;
 		} while (Number.isInteger(offset));
 
-		const href = URL.createObjectURL(new Blob(parts, { type: 'application/yaml;charset=utf-8' }));
+		const href = URL.createObjectURL(new Blob(parts, { type: mime + ';charset=utf-8' }));
 		const link = E('a', { href, download: response.filename });
 		document.body.appendChild(link);
 		link.click();

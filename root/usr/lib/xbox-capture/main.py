@@ -20,6 +20,7 @@ import time
 
 from neighbours import capture_device
 from devices import discover_devices
+from diagnostics import CaptureDiagnostics, report_lines
 from packets import Device, PacketDecoder, SNAPLEN, capture_filter, domain_name, is_public, read_pcap
 
 STATE = Path(os.environ.get("XBOX_CAPTURE_STATE_DIR", "/var/run/xbox-capture"))
@@ -35,6 +36,7 @@ METHODS = {
     "stop": {},
     "sessions": {},
     "get": {"id": "", "offset": 0},
+    "diagnostics": {"id": "", "offset": 0},
     "export": {"id": "", "format": "", "policy": "", "omit": "", "offset": 0},
     "remove": {"id": ""},
     "remove_many": {"ids": []},
@@ -55,6 +57,7 @@ MAX_REQUEST = 16 * 1024
 MAX_RESPONSE = 48 * 1024
 PAGE_BYTES = 20 * 1024
 LIVE_ROWS = 24
+CAPTURE_BUFFER_KIB = 512
 AUTO_BATCH = 16
 SESSION_ID = re.compile(r"[0-9a-f]{32}")
 INTERFACE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,14}")
@@ -166,6 +169,8 @@ class Session:
         self.port_total = 0
         self.recent = OrderedDict()
         self.started = time.monotonic()
+        self.trace = CaptureDiagnostics(interface, minutes, self.started)
+        self.diagnostics = None
         self.reason = None
         self.timer = None
 
@@ -276,7 +281,7 @@ class Session:
         }
 
     def result(self):
-        return {
+        result = {
             "summary": self.summary,
             "domains": [self.entry("domain", value) for value in sorted(self.domains)],
             "ips": [str(ipaddress.ip_address(value))
@@ -288,6 +293,9 @@ class Session:
                 for domain in self.domain_ips
             },
         }
+        if self.diagnostics is not None:
+            result["diagnostics"] = self.diagnostics
+        return result
 
 
 class Controller:
@@ -479,7 +487,7 @@ class Controller:
             selector = capture_device(device, interface, previous_mac)
             session = Session(name, interface, device, selector, minutes, baseline)
             command = [
-                "tcpdump", "-n", "-p", "-U", "--immediate-mode", "-s", str(SNAPLEN), "-B", "512",
+                "tcpdump", "-n", "-p", "-U", "--immediate-mode", "-s", str(SNAPLEN), "-B", str(CAPTURE_BUFFER_KIB),
                 "-i", interface,
             ]
             if cooked:
@@ -509,6 +517,7 @@ class Controller:
                 return
             session.reason = reason
             session.summary["state"] = "stopping"
+            session.trace.halted.set()
             session.process.send_signal(signal.SIGINT)
             timer = threading.Timer(4, session.process.kill)
             timer.daemon = True
@@ -524,6 +533,7 @@ class Controller:
     def record(self, session, error_log):
         process = session.process
         error = None
+        session.trace.start(process, error_log)
         try:
             with process.stdout as source:
                 for link, frame in read_pcap(source):
@@ -545,18 +555,17 @@ class Controller:
             code = process.wait()
             error = error or "抓包程序没有正常退出。"
         with error_log:
-            error_log.seek(0)
-            log = error_log.read(8192).decode(errors="replace")
-        drops = re.search(r"(\d+) packets? dropped by kernel", log)
+            session.diagnostics = session.trace.finish(process, error_log, code)
+        session.diagnostics.update(buffer_kib=CAPTURE_BUFFER_KIB, immediate=True)
         session.timer.cancel()
 
         with self.lock:
             if not session.reason or code not in (0, -signal.SIGINT, 130):
-                diagnostics = [line for line in log.splitlines() if line.startswith("tcpdump:")]
-                error = error or " ".join(diagnostics)[:500] or f"tcpdump 意外退出（{code}）。"
+                messages = [line for line in session.diagnostics["stderr"] if line.startswith("tcpdump:")]
+                error = error or " ".join(messages)[:500] or f"tcpdump 意外退出（{code}）。"
             session.summary.update(
                 ended=epoch(), state="error" if error else session.reason,
-                kernel_drops=int(drops[1]) if drops else None,
+                kernel_drops=session.diagnostics["final"].get("dropped"),
             )
             if error:
                 session.summary["error"] = error
@@ -662,6 +671,12 @@ class Controller:
                 result = self.get(args.get("id"))
             return export_rules(result, args.get("format", "provider"), args.get("policy", "Xbox"),
                                 args.get("omit", ""), args.get("offset", 0))
+        if method == "diagnostics":
+            id = args.get("id")
+            with self.lock:
+                result = self.get(id)
+            lines, next_offset = page(report_lines(result), args.get("offset", 0), lambda line: len(dumps(line).encode()))
+            return {"text": "".join(lines), "next": next_offset, "filename": f"xbox-capture-{id[:8]}-diagnostics.txt"}
         if method == "remove":
             with self.lock:
                 return self.remove(args.get("id"))
