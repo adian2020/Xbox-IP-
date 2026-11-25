@@ -4,25 +4,27 @@ OpenWrt 的 LuCI 插件。按 Xbox 的 MAC 地址或局域网 IP 开始一次录
 
 ## 安装
 
-将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.6.2 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.6.2)
+将对应的安装包上传到路由器的 `/tmp/`。安装时会从路由器的软件源安装缺少的依赖。[下载 1.6.3 安装包](https://github.com/adian2020/Xbox-IP-/tree/main/packages/1.6.3)
 
 **使用 opkg 的 OpenWrt（例如 23.05、24.10）**
 
 ```sh
 opkg update
-opkg install /tmp/luci-app-xbox-capture_1.6.2-1_all.ipk
+opkg install /tmp/luci-app-xbox-capture_1.6.3-1_all.ipk
 ```
 
 **使用 apk 的 OpenWrt（例如 25.12）**
 
 ```sh
 apk update
-apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.6.2-r1.apk
+apk add --allow-untrusted /tmp/luci-app-xbox-capture-1.6.3-r1.apk
 ```
 
 这里的 `--allow-untrusted` 用于安装这一个本地未签名的 APK。安装完成后重新打开 LuCI，进入 **服务 → Xbox 网络录制**。也可以用 `ubus call xbox-capture status '{}'` 确认插件已注册。
 
 ## 录制与导出
+
+在录制的 **查看与导出** 中，可以用 **排除关键词** 隐藏条目并将其从本次 YAML 或 MRS 导出中排除。匹配范围包括域名、IP、运营组织、ASN 和国家或地区。多个词用逗号分隔，例如「中国，AS9808」。清空后恢复显示，手动取消导出的勾选继续生效。
 
 1. 在 **Xbox 地址** 点 **选择设备**。列表会显示路由器从 LAN 邻居表和有效 DHCP 租约发现的设备、IPv4、IPv6 和 MAC。选中设备后会使用其 MAC，接口可识别时自动填入。也可以从 Xbox 的 **设置 → 常规 → 网络设置 → 高级设置** 查看地址后手动填写。
 2. 完全退出要录制的游戏或软件。填写名称和最长录制时间，点 **开始录制**，再启动游戏。按需要经过登录、大厅、匹配、联机或语音场景。

@@ -196,7 +196,7 @@ return view.extend({
 			E('div', { class: 'xbox-actions xbox-field-wide' }, [this.startButton, this.stopButton])
 		]);
 		const root = E('div', { id: 'xbox-capture' }, [
-			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.6.2' }),
+			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.6.3' }),
 			E('header', { class: 'xbox-heading' }, [
 				E('h2', {}, ['Xbox 网络录制']),
 				E('p', { class: 'xbox-muted' }, ['先开始录制，再打开游戏。'])
@@ -443,12 +443,14 @@ return view.extend({
 
 	drawSession(session, entries) {
 		const excluded = new Set();
+		const keywordExcluded = new Set();
 		let page = 0;
 		let exporting = false;
 		const table = E('div', { class: 'xbox-results', role: 'table', 'aria-label': '域名、IP 与端口' });
 		const paging = E('span', { class: 'xbox-muted' });
 		const selected = E('span', { class: 'xbox-muted', role: 'status' });
 		const search = E('input', { type: 'search', id: 'xbox-search', placeholder: '搜索域名、IP、端口或归属' });
+		const excludeKeywords = E('input', { type: 'search', id: 'xbox-exclude-keywords', placeholder: '例如 中国，AS9808' });
 		const searchType = E('select', { 'aria-label': '条目类型' }, [
 			E('option', { value: 'all' }, ['全部']),
 			E('option', { value: 'domain' }, ['域名']),
@@ -466,17 +468,22 @@ return view.extend({
 		const previous = button('上一页', () => { page--; drawRows(); });
 		const next = button('下一页', () => { page++; drawRows(); });
 		const indexed = entries.map((entry, index) => ({ entry, index }));
+		const targetMatches = (entry, query) => entry.value.toLowerCase().includes(query) || asn.matchesOwner(entry, query);
+		const isExcluded = index => excluded.has(index) || keywordExcluded.has(index);
 		const matches = () => {
 			const query = search.value.trim().toLowerCase();
-			return indexed.filter(({ entry }) =>
-				(entry.value.includes(query) || asn.matchesOwner(entry, query) || entry.ports?.some(([protocol, port]) =>
+			return indexed.filter(({ entry, index }) =>
+				!keywordExcluded.has(index) &&
+				(targetMatches(entry, query) || entry.ports?.some(([protocol, port]) =>
 					(protocol.toLowerCase() + ' ' + port).includes(query))) &&
 				(searchType.value === 'all' || searchType.value === (entry.sources ? 'domain' : 'ip')));
 		};
 		const updateSelected = () => {
-			selected.textContent = '已选 ' + (entries.length - excluded.size) + ' / ' + entries.length + ' 条';
-			download.disabled = exporting || excluded.size === entries.length;
-			mrsButton.disabled = excluded.size === entries.length;
+			const count = indexed.filter(({ index }) => !isExcluded(index)).length;
+			const keywordCount = keywordExcluded.size ? ' · 关键词排除 ' + keywordExcluded.size + ' 条' : '';
+			selected.textContent = '已选 ' + count + ' / ' + entries.length + ' 条' + keywordCount;
+			download.disabled = exporting || !count;
+			mrsButton.disabled = !count;
 		};
 		const drawRows = () => {
 			const matching = matches();
@@ -519,25 +526,36 @@ return view.extend({
 			updateSelected();
 		};
 		const resetPage = () => { page = 0; drawRows(); };
+		const applyKeywordExclusions = () => {
+			const keywords = excludeKeywords.value.toLowerCase().split(/[,，、]+/).map(value => value.trim()).filter(Boolean);
+			keywordExcluded.clear();
+			if (keywords.length) {
+				for (const { entry, index } of indexed) {
+					if (keywords.some(keyword => targetMatches(entry, keyword)))
+						keywordExcluded.add(index);
+				}
+			}
+			resetPage();
+		};
 		this.refreshOwnership = async () => {
 			const request = this.request;
 			try {
 				const result = await this.readSession(session.id, request);
 				if (!result || request !== this.request)
 					return;
-				const refreshed = new Map(result.entries.map(entry => [entry.value, entry]));
-				for (const entry of entries) {
-					const latest = refreshed.get(entry.value);
+				for (const { entry, index } of indexed) {
+					const latest = result.entries[index];
 					entry.owner = latest?.owner;
 					entry.owners = latest?.owners;
 				}
-				resetPage();
+				applyKeywordExclusions();
 			} catch (error) {
 				if (request === this.request)
 					errorNotice(error);
 			}
 		};
 		search.addEventListener('input', resetPage);
+		excludeKeywords.addEventListener('input', applyKeywordExclusions);
 		searchType.addEventListener('change', resetPage);
 
 		const download = button('下载 YAML', async () => {
@@ -552,7 +570,8 @@ return view.extend({
 				updateSelected();
 			}
 		}, 'xbox-primary');
-		const selection = () => excluded.size ? entries.map((_, i) => excluded.has(i) ? '1' : '0').join('') : '';
+		const selection = () => excluded.size || keywordExcluded.size
+			? indexed.map(({ index }) => isExcluded(index) ? '1' : '0').join('') : '';
 		const mrsButton = button('导出或发布 MRS', () => mrs.fromRecording(session.name, session.id, selection()));
 		const deleteButton = button('删除这条录制', () => this.confirmRemove([session.id]), 'xbox-danger');
 
@@ -589,6 +608,7 @@ return view.extend({
 			...notes.map(note => E('p', { class: 'xbox-note' }, [note])),
 			E('div', { class: 'xbox-detail-search' }, [
 				field('筛选结果', search),
+				field('排除关键词', excludeKeywords, '按域名、IP 或归属匹配。多个词用逗号分隔，命中项从导出中排除。'),
 				E('div', { class: 'xbox-actions' }, [
 					searchType,
 					button('选中匹配项', () => { matches().forEach(({ index }) => excluded.delete(index)); drawRows(); }),

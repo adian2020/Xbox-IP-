@@ -377,15 +377,18 @@
 }
 
 #xbox-capture .xbox-detail-search {
-	display: flex;
-	align-items: end;
-	flex-wrap: wrap;
-	gap: 7px;
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 9px 12px;
 	margin-top: 13px;
 }
 
-#xbox-capture .xbox-detail-search .xbox-field {
-	flex: 1 1 200px;
+#xbox-capture .xbox-detail-search .xbox-actions {
+	grid-column: 1 / -1;
+}
+
+@media (max-width: 540px) {
+	#xbox-capture .xbox-detail-search { grid-template-columns: minmax(0, 1fr); }
 }
 
 #xbox-capture .xbox-results {
