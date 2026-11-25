@@ -777,3 +777,25 @@
 #xbox-capture .xbox-monitor .xbox-asn-owner {
 	color: var(--monitor-accent);
 }
+
+#xbox-capture .xbox-asn-query {
+	width: fit-content;
+	min-height: 27px;
+	margin-top: 3px;
+	padding: 1px 5px;
+	border: 1px solid currentColor;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--xbox-accent);
+	font-size: .8rem;
+	cursor: pointer;
+}
+
+#xbox-capture .xbox-result-row .xbox-asn-query {
+	margin-left: 26px;
+}
+
+#xbox-capture .xbox-monitor .xbox-asn-query,
+#xbox-capture .xbox-monitor .xbox-asn-lookup-source {
+	color: var(--monitor-accent);
+}

@@ -20,7 +20,7 @@ import time
 
 from neighbours import capture_device
 from devices import discover_devices
-from packets import Device, PacketDecoder, SNAPLEN, capture_filter, is_public, read_pcap
+from packets import Device, PacketDecoder, SNAPLEN, capture_filter, domain_name, is_public, read_pcap
 
 STATE = Path(os.environ.get("XBOX_CAPTURE_STATE_DIR", "/var/run/xbox-capture"))
 METHODS = {
@@ -29,6 +29,7 @@ METHODS = {
     "live": {"id": "", "kind": "", "query": "", "offset": 0},
     "asn_status": {},
     "asn_update": {},
+    "domain_lookup": {"id": "", "domain": "", "resolver": ""},
     "start": {"name": "", "interface": "", "device": "", "minutes": 0, "baseline_id": ""},
     "stop": {},
     "sessions": {},
@@ -290,11 +291,13 @@ class Session:
 class Controller:
     def __init__(self, directory):
         from asn import ASNStore
+        from dnslookup import DomainLookups
         from publisher import Publisher
 
         self.directory = directory
         self.publisher = Publisher(directory)
         self.asn = ASNStore(directory)
+        self.domain_lookups = DomainLookups()
         self.device_snapshot = None
         self.active = None
         self.lock = threading.Lock()
@@ -338,8 +341,49 @@ class Controller:
         with self.asn.reader() as index:
             if index is not None:
                 for entry in result["entries"]:
-                    index.annotate(entry, bindings.get(entry["value"], ()))
+                    self.annotate_owner(index, id, entry, bindings)
         return result
+
+    def annotate_owner(self, index, id, entry, bindings):
+        name = entry["value"]
+        index.annotate(entry, bindings.get(name, ()))
+        if "sources" in entry and not entry.get("owners"):
+            job = self.domain_lookups.get((id, name))
+            if job and job["bindings"]:
+                index.annotate(entry, job["bindings"])
+
+    def domain_lookup(self, id, name, resolver):
+        self.path(id)
+        if (not isinstance(name, str) or len(name) > 253 or not name.isascii()
+                or domain_name(name.encode("ascii")) != name):
+            raise ValueError("请选择录制中的有效域名。")
+        key = (id, name)
+        if resolver != "":
+            if resolver not in ("system", "alidns"):
+                raise ValueError("请选择用于补查的 DNS。")
+            with self.lock:
+                if self.active and self.active.summary["id"] == id:
+                    recorded = name in self.active.domains
+                else:
+                    recorded = any(row["value"] == name for row in self.get(id)["domains"])
+            if not recorded:
+                raise ValueError("该域名不在这条录制中。")
+            with self.asn.reader() as index:
+                if index is None:
+                    raise ValueError("请先下载归属库。")
+            self.domain_lookups.start(key, resolver)
+        job = self.domain_lookups.get(key)
+        if job is None:
+            raise ValueError("找不到此补查，请重新查询。")
+        if job["pending"] or job["error"]:
+            return {"pending": job["pending"], "error": job["error"]}
+        entry = {"value": name, "sources": ["DNS"]}
+        with self.asn.reader() as index:
+            if index is not None:
+                index.annotate(entry, job["bindings"])
+        if not entry.get("owners"):
+            return {"pending": False, "error": "当前归属库未收录这些公网地址。可以更新归属库后再试。"}
+        return {"pending": False, "owners": entry["owners"]}
 
     def start(self, name, interface, device, minutes, baseline_id=""):
         name = label(name, "请输入游戏或软件名称，最多 64 个字符。")
@@ -537,6 +581,8 @@ class Controller:
             return self.asn.status()
         if method == "asn_update":
             return self.asn.update()
+        if method == "domain_lookup":
+            return self.domain_lookup(args.get("id"), args.get("domain"), args.get("resolver", ""))
         if method == "start":
             return self.start(args.get("name"), args.get("interface"), args.get("device"),
                               args.get("minutes"), args.get("baseline_id", ""))
@@ -546,13 +592,14 @@ class Controller:
             with self.lock:
                 return {"sessions": self.summaries()}
         if method == "get":
+            id = args.get("id")
             with self.lock:
-                result = self.get(args.get("id"))
+                result = self.get(id)
             bindings = result.get("domain_ips", {})
             with self.asn.reader() as index:
                 def size(entry):
                     if index is not None:
-                        index.annotate(entry, bindings.get(entry["value"], ()))
+                        self.annotate_owner(index, id, entry, bindings)
                     return len(dumps(entry).encode()) + 1
 
                 rows = [entry.copy() for entry in result_entries(result)]

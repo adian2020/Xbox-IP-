@@ -7,6 +7,7 @@ from pathlib import Path
 import struct
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -130,6 +131,55 @@ class OwnershipTests(unittest.TestCase):
                              ["download", "download", "index", "finalize"])
             self.assertIsNone(store.status()["progress"])
             self.assertIsNone(store.status()["error"])
+
+    def test_domain_lookup_falls_back_without_changing_the_recording(self):
+        with tempfile.TemporaryDirectory() as temp:
+            controller = Controller(Path(temp))
+            with controller.asn.path.open("wb") as output:
+                build_index(BytesIO(FEED), output)
+            device = Device("192.168.1.50")
+            session = Session("Game", "br-lan", device, device, 10, None)
+            name = "game.example"
+            session.observe(ipaddress.ip_address("192.168.1.1").packed, {name}, "DNS", ("UDP", 53))
+            controller.active = session
+            id = session.summary["id"]
+            args = {"id": id, "domain": name}
+
+            def lookup(resolver):
+                result = controller.dispatch("domain_lookup", {**args, "resolver": resolver})
+                deadline = time.monotonic() + 1
+                while result["pending"] and time.monotonic() < deadline:
+                    time.sleep(.01)
+                    result = controller.dispatch("domain_lookup", args)
+                self.assertFalse(result["pending"])
+                return result
+
+            with patch("dnslookup.resolve_system", return_value={ipaddress.ip_address("198.18.0.1").packed}) as resolve:
+                with self.assertRaisesRegex(ValueError, "不在"):
+                    controller.dispatch("domain_lookup", {**args, "domain": "other.example", "resolver": "system"})
+                resolve.assert_not_called()
+                self.assertIn("Fake IP", lookup("system")["error"])
+
+            address = ipaddress.ip_address("1.0.0.8").packed
+            with patch("dnslookup.resolve_alidns", return_value={address}):
+                owner, = lookup("alidns")["owners"]
+            self.assertEqual((owner["asn"], owner["country"], owner["source"]), (8075, "US", "阿里公共 DNS 补查"))
+            live, = controller.dispatch("live", {"id": id})["entries"]
+            self.assertEqual(live["owners"], [owner])
+            self.assertNotIn("ports", live)
+            controller.save(session.result())
+            controller.active = None
+            recorded, = controller.dispatch("get", {"id": id})["entries"]
+            self.assertEqual(recorded["owners"], [owner])
+            self.assertEqual(controller.get(id)["domain_ips"], {})
+            yaml = controller.dispatch("export", {"id": id})["yaml"]
+            self.assertIn("DOMAIN,game.example", yaml)
+            self.assertNotIn("1.0.0.8", yaml)
+
+            session.observe(address, {name}, "TLS SNI", ("TCP", 443))
+            controller.active = session
+            live, = controller.dispatch("live", {"id": id, "kind": "domain"})["entries"]
+            self.assertEqual(live["owners"][0]["source"], "TLS SNI")
 
     def test_history_pagination_counts_ownership_metadata(self):
         with tempfile.TemporaryDirectory() as temp:

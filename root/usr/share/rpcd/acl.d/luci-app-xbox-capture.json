@@ -8,7 +8,7 @@
     },
     "write": {
       "ubus": {
-        "xbox-capture": ["start", "stop", "remove", "remove_many", "asn_update", "mrs_import", "github_login", "github_publish"]
+        "xbox-capture": ["start", "stop", "remove", "remove_many", "asn_update", "domain_lookup", "mrs_import", "github_login", "github_publish"]
       }
     }
   }

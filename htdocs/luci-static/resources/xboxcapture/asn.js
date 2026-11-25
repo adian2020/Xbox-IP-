@@ -1,9 +1,12 @@
 'use strict';
 'require baseclass';
 'require rpc';
+'require ui';
 
 const status = rpc.declare({ object: 'xbox-capture', method: 'asn_status', raise: true });
 const update = rpc.declare({ object: 'xbox-capture', method: 'asn_update', raise: true });
+const lookup = rpc.declare({ object: 'xbox-capture', method: 'domain_lookup',
+	params: ['id', 'domain', 'resolver'], raise: true });
 
 const namesByAsn = {
 	3462: '中华电信',
@@ -166,12 +169,73 @@ function ownerLabels(owner) {
 
 function ownerBadge(entry) {
 	const owners = (entry.owners || [entry.owner]).filter(owner => Number.isInteger(owner?.asn));
-	return owners.length ? E('span', { class: 'xbox-asn-owners' }, owners.map(owner => {
+	if (!owners.length)
+		return '';
+	const firstSource = owners[0].source;
+	const badges = owners.map(owner => {
 		const { fullName, organization, asn } = ownerLabels(owner);
 		return E('small', { class: 'xbox-asn-owner', title: [fullName, asn, owner.source].filter(Boolean).join(' · ') }, [
 			[organization, asn].filter(Boolean).join(' · ')
 		]);
-	})) : '';
+	});
+	if (firstSource?.endsWith('补查'))
+		badges.unshift(E('small', { class: 'xbox-muted xbox-asn-lookup-source' }, [firstSource]));
+	return E('span', { class: 'xbox-asn-owners' }, badges);
+}
+
+function showLookup(id, domain, onFound) {
+	let open = true;
+	const resolver = E('select', { 'aria-label': '补查 DNS' }, [
+		E('option', { value: 'system' }, ['路由器 DNS']),
+		E('option', { value: 'alidns' }, ['阿里公共 DNS'])
+	]);
+	const result = E('div', { role: 'status' });
+	const query = E('button', { type: 'button', class: 'btn cbi-button cbi-button-action', click: run }, ['查询']);
+	const close = E('button', { type: 'button', class: 'btn cbi-button', click: () => {
+		open = false;
+		ui.hideModal();
+	}}, ['关闭']);
+
+	async function run() {
+		query.disabled = resolver.disabled = true;
+		result.textContent = '正在查询域名归属…';
+		try {
+			let response = await lookup(id, domain, resolver.value);
+			for (let retries = 0; open && response?.pending && retries < 24; retries++) {
+				await new Promise(resolve => setTimeout(resolve, 500));
+				if (open)
+					response = await lookup(id, domain, '');
+			}
+			if (!open)
+				return;
+			if (response?.error || !response?.owners?.length)
+				throw new Error(response?.error || '补查暂未完成，请稍后重试。');
+			result.replaceChildren(ownerBadge(response));
+			onFound();
+		} catch (error) {
+			if (open)
+				result.textContent = error.message;
+		} finally {
+			query.disabled = resolver.disabled = false;
+		}
+	}
+
+	ui.showModal('补查域名归属', [
+		E('p', {}, [E('strong', {}, [domain])]),
+		E('p', {}, ['确认后会向所选 DNS 查询此域名。解析结果可能随时间和网络变化。']),
+		resolver, result,
+		E('div', { class: 'right' }, [close, ' ', query])
+	]);
+}
+
+function lookupButton(entry, id, onFound) {
+	if (!entry.sources || entry.owners?.length)
+		return '';
+	return E('button', {
+		type: 'button', class: 'xbox-asn-query',
+		'aria-label': '补查域名归属 ' + entry.value,
+		click: () => showLookup(id, entry.value, onFound)
+	}, ['补查归属']);
 }
 
 function matchesOwner(entry, query) {
@@ -183,4 +247,4 @@ function matchesOwner(entry, query) {
 	});
 }
 
-return baseclass.extend({ controls, ownerBadge, matchesOwner });
+return baseclass.extend({ controls, ownerBadge, lookupButton, matchesOwner });

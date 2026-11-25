@@ -244,7 +244,8 @@ function captureMonitor(openRecord) {
 						E('div', { class: 'xbox-monitor-target' }, [
 							E('strong', {}, [entry.value]),
 							E('small', {}, [source]),
-							asn.ownerBadge(entry)
+							asn.ownerBadge(entry),
+							asn.lookupButton(entry, page.id, load)
 						]),
 						E('div', { class: 'xbox-ports' }, found.length ? found : [E('span', {}, ['—'])]),
 						E('time', {}, [new Date(entry.seen * 1000).toLocaleTimeString()])

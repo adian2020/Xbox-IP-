@@ -196,7 +196,7 @@ return view.extend({
 			E('div', { class: 'xbox-actions xbox-field-wide' }, [this.startButton, this.stopButton])
 		]);
 		const root = E('div', { id: 'xbox-capture' }, [
-			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.6.0' }),
+			E('link', { rel: 'stylesheet', href: L.resource('xboxcapture/capture.css') + '?v=1.6.2' }),
 			E('header', { class: 'xbox-heading' }, [
 				E('h2', {}, ['Xbox 网络录制']),
 				E('p', { class: 'xbox-muted' }, ['先开始录制，再打开游戏。'])
@@ -501,7 +501,11 @@ return view.extend({
 						E('label', { class: 'xbox-result-label' }, [choice,
 							E('span', {}, [E('span', { class: 'xbox-target' }, [entry.value]),
 								E('small', { class: 'xbox-muted' }, [source]), asn.ownerBadge(entry)])
-						])
+						]),
+						asn.lookupButton(entry, session.id, () => {
+							if (this.detailId === session.id)
+								this.refreshOwnership?.();
+						})
 					]),
 					E('div', { class: 'xbox-ports', role: 'cell' }, ports.length ? ports : [
 						E('span', { class: 'xbox-muted', 'aria-label': '无已记录端口' }, ['—'])
@@ -554,7 +558,7 @@ return view.extend({
 
 		const notes = [];
 		if (session.domain_count > 0 && !session.domain_asn)
-			notes.push('此录制保存于域名归属功能加入前。新录制可显示已关联的域名归属。');
+			notes.push('此录制尚未保存域名与公网 IP 的关联。可点击条目下方的「补查归属」。');
 		if (session.error)
 			notes.push(session.error);
 		if (session.storage_warning)
